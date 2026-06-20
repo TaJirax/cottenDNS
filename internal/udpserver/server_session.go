@@ -244,14 +244,22 @@ func (s *Server) streamARQConfig(compressionType uint8) arq.Config {
 	}
 }
 
-// maybeEnableStreamFEC turns on download-direction FEC for a freshly created
-// data stream when the server is configured for it. It is idempotent, so it is
-// safe to call at every data-stream entry point.
+// maybeEnableStreamFEC configures download-direction FEC for a freshly created
+// data stream. FEC_DOWNLOAD_ENABLED forces it always-on at the fixed parity;
+// otherwise FEC_AUTO_ENABLED arms loss-triggered FEC that turns on only when the
+// stream's measured loss crosses the threshold. It is idempotent, so it is safe
+// to call at every data-stream entry point.
 func (s *Server) maybeEnableStreamFEC(stream *Stream_server) {
-	if stream == nil || !s.cfg.FECDownloadEnabled {
+	if stream == nil {
 		return
 	}
-	stream.EnableFEC(s.cfg.FECBlockSize, s.cfg.FECParity)
+	if s.cfg.FECDownloadEnabled {
+		stream.EnableFEC(s.cfg.FECBlockSize, s.cfg.FECParity)
+		return
+	}
+	if s.cfg.FECAutoEnabled {
+		stream.ConfigureAutoFEC(s.cfg.FECBlockSize, s.cfg.FECParity, s.cfg.FECAutoMaxParity, s.cfg.FECAutoLossThreshold)
+	}
 }
 
 func (s *Server) queueMainSessionPacket(sessionID uint16, packet VpnProto.Packet) bool {

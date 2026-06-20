@@ -257,6 +257,17 @@ FEC_DOWNLOAD_ENABLED = false
 FEC_BLOCK_SIZE = 4
 FEC_PARITY = 4
 
+# Loss-triggered (automatic) FEC. When FEC_AUTO_ENABLED is true (and
+# FEC_DOWNLOAD_ENABLED is not forcing FEC always-on), each download stream watches
+# its own retransmit rate and turns FEC on only once measured loss crosses
+# FEC_AUTO_LOSS_THRESHOLD, scaling parity to the loss (between FEC_PARITY and
+# FEC_AUTO_MAX_PARITY). Below the threshold there is zero FEC overhead, so this is
+# safe to leave on: links stay lean when healthy and self-protect under heavy
+# loss. FEC_AUTO_MAX_PARITY = 0 auto-sizes the cap to 4x FEC_BLOCK_SIZE.
+FEC_AUTO_ENABLED = true
+FEC_AUTO_LOSS_THRESHOLD = 0.3
+FEC_AUTO_MAX_PARITY = 0
+
 # Relative or absolute path to the encryption key file.
 ENCRYPTION_KEY_FILE = "encrypt_key.txt"
 
@@ -320,4 +331,4 @@ LOG_LEVEL = "INFO"
 
 # ------------------------------------------------------------------------------
 
-CONFIG_VERSION = "11"
+CONFIG_VERSION = "12"

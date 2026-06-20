@@ -62,6 +62,8 @@ type mtuConnectionProbeResult struct {
 	UploadChars   int
 	DownloadBytes int
 	ResolveTime   time.Duration
+	UploadLoss    float64
+	DownloadLoss  float64
 }
 
 type mtuScanCounters struct {
@@ -101,10 +103,114 @@ func (c *Client) runFullMTUTests(ctx context.Context) error {
 		return ErrNoValidConnections
 	}
 
-	c.applySyncedMTUState(minUpload, minDownload, minUploadChars)
-	c.initResolverRecheckMeta()
-	c.logMTUCompletion(validConns)
+	c.finalizeMTUSelection(validConns, minUpload, minDownload, minUploadChars)
 	return nil
+}
+
+// finalizeMTUSelection runs Layer 2 clustering and, when MTU_ADAPTIVE_GROUPING
+// is enabled, Layer 3 best-group selection: it raises the session MTU to the
+// throughput-optimal operating point and demotes resolvers that cannot sustain
+// it out of the active pool. It then applies the synced MTU, refreshes the
+// balancer, primes resolver-recheck metadata, and logs the outcome. It returns
+// the final set of connections kept in the active pool.
+func (c *Client) finalizeMTUSelection(validConns []Connection, minUpload, minDownload, minUploadChars int) []Connection {
+	// Cluster the full validated set BEFORE any demotion so every tier (including
+	// the slower ones that may be demoted) is visible in the UI.
+	groups := clusterConnectionsByMTU(c.connections, c.cfg.MTUGroupGapRatio)
+	c.mtuGroups = groups
+
+	opUpload, opDownload, poolSize, backups := 0, 0, 0, 0
+	if c.cfg.MTUAdaptiveGrouping {
+		u, d, n := selectMTUOperatingPoint(validConns)
+		// Only act when the optimal point actually excludes someone; otherwise it
+		// equals the global minimum and nothing changes.
+		if d > 0 && n > 0 && n < len(validConns) {
+			backups = c.markBackupResolversBelowMTU(u, d)
+			if backups > 0 {
+				c.balancer.RefreshValidConnections()
+				// Run the session at the operating point: the active (primary) pool
+				// all sustain it, while the slower resolvers stay in reserve and
+				// only carry traffic if the whole primary pool fails.
+				minUpload, minDownload, minUploadChars = u, d, c.encodedCharsForPayload(u)
+				validConns = primaryMTUConnections(c.connections)
+			}
+			opUpload, opDownload, poolSize = u, d, n
+		}
+	}
+
+	c.applySyncedMTUState(minUpload, minDownload, minUploadChars)
+	c.balancer.RefreshValidConnections()
+	c.initResolverRecheckMeta()
+
+	c.logMTUCompletion(validConns)
+	if opDownload > 0 {
+		c.logMTUOperatingPoint(opUpload, opDownload, poolSize, backups)
+	}
+	c.logMTUGroups(groups)
+	return validConns
+}
+
+// recomputeMTUOperatingPoint re-derives the adaptive operating point over the
+// resolvers that are still reachable (primary + backup) and re-applies the
+// session MTU and backup tiers. It runs at session (re)establishment so that, if
+// the fast/primary pool has shrunk (e.g. those resolvers died mid-session),
+// surviving backups are promoted at a viable lower MTU instead of stranding the
+// session at an MTU nothing left can carry. No-op when adaptive grouping is off.
+func (c *Client) recomputeMTUOperatingPoint() {
+	if c == nil || !c.cfg.MTUAdaptiveGrouping || c.balancer == nil {
+		return
+	}
+	conns := c.balancer.AllValidConnectionsIncludingBackup()
+	if len(conns) == 0 {
+		return
+	}
+	u, d, n := selectMTUOperatingPoint(conns)
+	if d <= 0 || n <= 0 {
+		return
+	}
+
+	c.balancer.ReclassifyBackups(func(cc Connection) bool {
+		return cc.DownloadMTUBytes < d || cc.UploadMTUBytes < u
+	})
+
+	prevUp, prevDown := c.syncedUploadMTU, c.syncedDownloadMTU
+	c.applySyncedMTUState(u, d, c.encodedCharsForPayload(u))
+	if (prevUp != u || prevDown != d) && c.mtuInfoEnabled() {
+		c.log.Infof(
+			"<green>[ADAPTIVE MTU]</green> Re-derived operating point at session (re)start: upload=<cyan>%d</cyan> download=<cyan>%d</cyan> (was %d/%d) | active pool=<green>%d</green> resolver(s).",
+			u, d, prevUp, prevDown, n,
+		)
+	}
+}
+
+// markBackupResolversBelowMTU flags every valid connection that cannot sustain
+// the given operating MTU as a backup (reserve). The connection stays valid and
+// visible; the balancer keeps it out of the active pool and only selects it when
+// no primary resolver remains. Returns the count moved to the backup tier.
+func (c *Client) markBackupResolversBelowMTU(uploadMTU, downloadMTU int) int {
+	marked := 0
+	for i := range c.connections {
+		conn := &c.connections[i]
+		if !conn.IsValid || conn.Backup {
+			continue
+		}
+		if conn.DownloadMTUBytes < downloadMTU || conn.UploadMTUBytes < uploadMTU {
+			conn.Backup = true
+			marked++
+		}
+	}
+	return marked
+}
+
+// primaryMTUConnections returns the active (non-backup) valid connections.
+func primaryMTUConnections(conns []Connection) []Connection {
+	out := make([]Connection, 0, len(conns))
+	for _, conn := range conns {
+		if conn.IsValid && !conn.Backup {
+			out = append(out, conn)
+		}
+	}
+	return out
 }
 
 // runAllMTUProbeWorkers dispatches MTU probe jobs to workers. When onValid is
@@ -168,10 +274,13 @@ func (c *Client) prepareConnectionMTUScanState(conn *Connection) {
 		return
 	}
 	conn.IsValid = false
+	conn.Backup = false
 	conn.UploadMTUBytes = 0
 	conn.UploadMTUChars = 0
 	conn.DownloadMTUBytes = 0
 	conn.MTUResolveTime = 0
+	conn.UploadMTULoss = 0
+	conn.DownloadMTULoss = 0
 }
 
 func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, serverID int, total int, maxUploadPayload int, counters *mtuScanCounters) {
@@ -261,6 +370,8 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 	conn.UploadMTUChars = result.UploadChars
 	conn.DownloadMTUBytes = result.DownloadBytes
 	conn.MTUResolveTime = result.ResolveTime
+	conn.UploadMTULoss = result.UploadLoss
+	conn.DownloadMTULoss = result.DownloadLoss
 
 	completed := counters.completed.Add(1)
 	validNow := counters.valid.Add(1)
@@ -291,7 +402,7 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 	}
 	defer probeTransport.conn.Close()
 
-	upOK, upBytes, upChars, upRTT, err := c.testUploadMTU(ctx, conn, probeTransport, maxUploadPayload)
+	upOK, upBytes, upChars, upRTT, upLoss, err := c.testUploadMTU(ctx, conn, probeTransport, maxUploadPayload)
 	if err != nil || !upOK {
 		conn.IsValid = false
 		result.UploadBytes = upBytes
@@ -300,14 +411,16 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 	}
 	result.UploadBytes = upBytes
 	result.UploadChars = upChars
+	result.UploadLoss = upLoss
 
-	downOK, downBytes, downRTT, err := c.testDownloadMTU(ctx, conn, probeTransport, upBytes)
+	downOK, downBytes, downRTT, downLoss, err := c.testDownloadMTU(ctx, conn, probeTransport, upBytes)
 	if err != nil || !downOK {
 		conn.IsValid = false
 		result.DownloadBytes = downBytes
 		return result, mtuRejectDownload
 	}
 	result.DownloadBytes = downBytes
+	result.DownloadLoss = downLoss
 	result.ResolveTime = averageMTUProbeRTT(upRTT, downRTT)
 	return result, mtuRejectNone
 }
@@ -323,9 +436,9 @@ func (c *Client) precomputeUploadCaps() map[string]int {
 	return caps
 }
 
-func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, maxPayload int) (bool, int, int, time.Duration, error) {
+func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, maxPayload int) (bool, int, int, time.Duration, float64, error) {
 	if maxPayload <= 0 {
-		return false, 0, 0, 0, nil
+		return false, 0, 0, 0, 0, nil
 	}
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf("<cyan>[MTU]</cyan> Testing upload MTU for %s", conn.Domain)
@@ -339,7 +452,7 @@ func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTrans
 		maxPayload = maxLimit
 	}
 
-	best, bestRTT := c.binarySearchMTU(
+	best, bestRTT, bestLoss := c.binarySearchMTU(
 		ctx,
 		"upload mtu",
 		c.cfg.MinUploadMTU,
@@ -351,16 +464,16 @@ func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTrans
 		},
 	)
 	if best < max(defaultMTUMinFloor, c.cfg.MinUploadMTU) {
-		return false, 0, 0, 0, nil
+		return false, 0, 0, 0, 0, nil
 	}
-	return true, best, c.encodedCharsForPayload(best), bestRTT, nil
+	return true, best, c.encodedCharsForPayload(best), bestRTT, bestLoss, nil
 }
 
-func (c *Client) testDownloadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, uploadMTU int) (bool, int, time.Duration, error) {
+func (c *Client) testDownloadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, uploadMTU int) (bool, int, time.Duration, float64, error) {
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf("<cyan>[MTU]</cyan> Testing download MTU for %s", conn.Domain)
 	}
-	best, bestRTT := c.binarySearchMTU(
+	best, bestRTT, bestLoss := c.binarySearchMTU(
 		ctx,
 		"download mtu",
 		c.cfg.MinDownloadMTU,
@@ -372,14 +485,14 @@ func (c *Client) testDownloadMTU(ctx context.Context, conn *Connection, probeTra
 		},
 	)
 	if best < max(defaultMTUMinFloor, c.cfg.MinDownloadMTU) {
-		return false, 0, 0, nil
+		return false, 0, 0, 0, nil
 	}
-	return true, best, bestRTT, nil
+	return true, best, bestRTT, bestLoss, nil
 }
 
-func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, testFn func(int, bool) (bool, time.Duration, error)) (int, time.Duration) {
+func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, testFn func(int, bool) (bool, time.Duration, error)) (int, time.Duration, float64) {
 	if maxValue <= 0 {
-		return 0, 0
+		return 0, 0, 0
 	}
 
 	low := max(minValue, defaultMTUMinFloor)
@@ -393,7 +506,7 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				high,
 			)
 		}
-		return 0, 0
+		return 0, 0, 0
 	}
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf(
@@ -404,31 +517,15 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 		)
 	}
 
-	check := func(value int) (bool, time.Duration) {
-		ok := false
-		var rtt time.Duration
-		for attempt := 0; attempt < c.mtuTestRetries; attempt++ {
-			if err := ctx.Err(); err != nil {
-				return false, 0
-			}
-			passed, measuredRTT, err := testFn(value, attempt > 0)
-			if err != nil && c.log != nil && c.log.Enabled(logger.LevelDebug) {
-				c.log.Debugf("MTU test callable raised for %d: %v", value, err)
-			}
-			if err == nil && passed {
-				ok = true
-				rtt = measuredRTT
-				break
-			}
-		}
-		return ok, rtt
+	check := func(value int) (bool, time.Duration, float64) {
+		return c.evaluateMTUCandidate(ctx, value, testFn)
 	}
 
-	if ok, rtt := check(high); ok {
+	if ok, rtt, loss := check(high); ok {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf("<cyan>[MTU]</cyan> Max MTU %d is valid.", high)
 		}
-		return high, rtt
+		return high, rtt, loss
 	}
 	if low == high {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
@@ -437,11 +534,12 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				low,
 			)
 		}
-		return 0, 0
+		return 0, 0, 0
 	}
 	best := low
 	bestRTT := time.Duration(0)
-	if ok, rtt := check(low); !ok {
+	bestLoss := 0.0
+	if ok, rtt, loss := check(low); !ok {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf(
 				"<cyan>[MTU]</cyan> Both boundary MTUs failed (min=%d, max=%d). Skipping middle checks.",
@@ -449,30 +547,91 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				high,
 			)
 		}
-		return 0, 0
+		return 0, 0, 0
 	} else {
 		bestRTT = rtt
+		bestLoss = loss
 	}
 
 	left := low + 1
 	right := high - 1
 	for left <= right {
 		if err := ctx.Err(); err != nil {
-			return 0, 0
+			return 0, 0, 0
 		}
 		mid := (left + right) / 2
-		if ok, rtt := check(mid); ok {
+		if ok, rtt, loss := check(mid); ok {
 			best = mid
 			bestRTT = rtt
+			bestLoss = loss
 			left = mid + 1
 		} else {
 			right = mid - 1
 		}
 	}
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
-		c.log.Debugf("<cyan>[MTU]</cyan> Binary search result: %d", best)
+		c.log.Debugf("<cyan>[MTU]</cyan> Binary search result: %d (loss=%.0f%%)", best, bestLoss*100)
 	}
-	return best, bestRTT
+	return best, bestRTT, bestLoss
+}
+
+// evaluateMTUCandidate decides whether a single MTU value is acceptable and
+// reports its measured loss. With MTU_PROBE_SAMPLES <= 1 it keeps the legacy
+// behavior (accept if any of mtuTestRetries attempts succeed; loss reported as
+// 0 on success, 1 on failure). With MTU_PROBE_SAMPLES > 1 it switches to
+// loss-aware probing: it sends that many independent probes and accepts the
+// candidate only if the observed loss fraction is at or below MTU_MAX_LOSS,
+// returning the actual measured loss so the caller can record the loss at the
+// chosen MTU edge.
+func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn func(int, bool) (bool, time.Duration, error)) (bool, time.Duration, float64) {
+	samples := c.cfg.MTUProbeSamples
+	if samples > 1 {
+		success := 0
+		var sumRTT time.Duration
+		for i := 0; i < samples; i++ {
+			if err := ctx.Err(); err != nil {
+				return false, 0, 1
+			}
+			passed, rtt, err := testFn(value, i > 0)
+			if err != nil && c.log != nil && c.log.Enabled(logger.LevelDebug) {
+				c.log.Debugf("MTU test callable raised for %d: %v", value, err)
+			}
+			if err == nil && passed {
+				success++
+				if rtt > 0 {
+					sumRTT += rtt
+				}
+			}
+		}
+		loss := 1 - float64(success)/float64(samples)
+		var avgRTT time.Duration
+		if success > 0 {
+			avgRTT = sumRTT / time.Duration(success)
+		}
+		ok := loss <= c.cfg.MTUMaxLoss
+		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
+			c.log.Debugf(
+				"<cyan>[MTU]</cyan> Candidate %d bytes: loss=%.0f%% (%d/%d ok), accept=%v (max=%.0f%%)",
+				value, loss*100, success, samples, ok, c.cfg.MTUMaxLoss*100,
+			)
+		}
+		return ok, avgRTT, loss
+	}
+
+	// Legacy: accept if any retry succeeds.
+	for attempt := 0; attempt < c.mtuTestRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return false, 0, 1
+		}
+		passed, measuredRTT, err := testFn(value, attempt > 0)
+		if err != nil && c.log != nil && c.log.Enabled(logger.LevelDebug) {
+			c.log.Debugf("MTU test callable raised for %d: %v", value, err)
+		}
+		if err == nil && passed {
+			return true, measuredRTT, 0
+		}
+	}
+	return false, 0, 1
 }
 
 func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, mtuSize int, options mtuProbeOptions) (bool, time.Duration, error) {
@@ -851,8 +1010,6 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 	}
 
 	c.balancer.RefreshValidConnections()
-	c.applySyncedMTUState(minUpload, minDownload, minUploadChars)
-	c.initResolverRecheckMeta()
 
 	if c.log != nil {
 		c.log.Infof(
@@ -860,7 +1017,7 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 			len(validConns),
 		)
 	}
-	c.logMTUCompletion(validConns)
+	c.finalizeMTUSelection(validConns, minUpload, minDownload, minUploadChars)
 	return nil
 }
 

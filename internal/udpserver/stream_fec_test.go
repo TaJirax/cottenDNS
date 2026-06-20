@@ -18,9 +18,47 @@ import (
 	"fmt"
 	"testing"
 
+	Enums "cottenpickdns-go/internal/enums"
 	"cottenpickdns-go/internal/fec"
 	VpnProto "cottenpickdns-go/internal/vpnproto"
 )
+
+func TestStreamServerAutoFECEnablesOnLoss(t *testing.T) {
+	s := &Stream_server{ID: 1}
+	s.ConfigureAutoFEC(4, 2, 16, 0.3)
+	if s.FECEnabled() {
+		t.Fatal("auto FEC should start off")
+	}
+
+	// One window: 40 retransmits against 64 originals -> loss ~38% (> 30%).
+	for i := 0; i < 40; i++ {
+		s.recordFECSample(Enums.PACKET_STREAM_RESEND)
+	}
+	for i := 0; i < fecAutoWindow; i++ {
+		s.recordFECSample(Enums.PACKET_STREAM_DATA)
+	}
+
+	if !s.FECEnabled() {
+		t.Fatal("auto FEC should turn on once loss crosses the threshold")
+	}
+}
+
+func TestStreamServerAutoFECStaysOffOnLowLoss(t *testing.T) {
+	s := &Stream_server{ID: 2}
+	s.ConfigureAutoFEC(4, 2, 16, 0.3)
+
+	// 5 retransmits against 64 originals -> loss ~7% (< 30%).
+	for i := 0; i < 5; i++ {
+		s.recordFECSample(Enums.PACKET_STREAM_RESEND)
+	}
+	for i := 0; i < fecAutoWindow; i++ {
+		s.recordFECSample(Enums.PACKET_STREAM_DATA)
+	}
+
+	if s.FECEnabled() {
+		t.Fatal("auto FEC should stay off under low loss")
+	}
+}
 
 func TestStreamServerFECRoundTripWithLoss(t *testing.T) {
 	// block=4 data + parity=4 recovery -> any 4 of 8 shards reconstruct a block,
