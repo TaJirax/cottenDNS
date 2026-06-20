@@ -85,6 +85,14 @@ type ServerConfig struct {
 	FECDownloadEnabled bool `toml:"FEC_DOWNLOAD_ENABLED"`
 	FECBlockSize       int  `toml:"FEC_BLOCK_SIZE"`
 	FECParity          int  `toml:"FEC_PARITY"`
+	// Loss-triggered FEC. When FECAutoEnabled is true (and FEC_DOWNLOAD_ENABLED is
+	// not forcing FEC always-on), each download stream measures its own loss from
+	// the retransmit rate and turns FEC on once that loss crosses
+	// FECAutoLossThreshold, scaling parity to the measured loss (between FECParity
+	// and FECAutoMaxParity). Below the threshold there is zero FEC overhead.
+	FECAutoEnabled       bool    `toml:"FEC_AUTO_ENABLED"`
+	FECAutoLossThreshold float64 `toml:"FEC_AUTO_LOSS_THRESHOLD"`
+	FECAutoMaxParity     int     `toml:"FEC_AUTO_MAX_PARITY"`
 	LogLevel                          string   `toml:"LOG_LEVEL"`
 	ARQWindowSize                     int      `toml:"ARQ_WINDOW_SIZE"`
 	ARQInitialRTOSeconds              float64  `toml:"ARQ_INITIAL_RTO_SECONDS"`
@@ -169,6 +177,8 @@ func defaultServerConfig() ServerConfig {
 		SupportedDownloadCompressionTypes: []int{0, 3},
 		DataEncryptionMethod:              1,
 		EncryptionAutoDetect:              true,
+		FECAutoEnabled:                    true,
+		FECAutoLossThreshold:              0.3,
 		EncryptionKeyFile:                 "encrypt_key.txt",
 		LogLevel:                          "INFO",
 		ARQWindowSize:                     2000,
@@ -396,6 +406,20 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	}
 	if cfg.FECBlockSize+cfg.FECParity > 256 {
 		cfg.FECParity = 256 - cfg.FECBlockSize
+	}
+	if cfg.FECAutoLossThreshold <= 0 || cfg.FECAutoLossThreshold >= 1 {
+		cfg.FECAutoLossThreshold = 0.3
+	}
+	if cfg.FECAutoMaxParity <= 0 {
+		// Default auto cap: enough parity to ride out heavy loss (4x the block),
+		// bounded by the Reed-Solomon shard limit.
+		cfg.FECAutoMaxParity = cfg.FECBlockSize * 4
+	}
+	if cfg.FECBlockSize+cfg.FECAutoMaxParity > 256 {
+		cfg.FECAutoMaxParity = 256 - cfg.FECBlockSize
+	}
+	if cfg.FECAutoMaxParity < cfg.FECParity {
+		cfg.FECAutoMaxParity = cfg.FECParity
 	}
 
 	cfg.SupportedUploadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedUploadCompressionTypes)

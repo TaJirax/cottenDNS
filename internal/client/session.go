@@ -35,6 +35,11 @@ const (
 )
 
 func (c *Client) InitializeSession(maxAttempts int) error {
+	// Re-derive the adaptive operating point over the surviving resolver pool
+	// before (re)establishing the session, so a restart after primary-pool loss
+	// promotes backups at a viable lower MTU rather than reusing a stale one.
+	c.recomputeMTUOperatingPoint()
+
 	if c.syncedUploadMTU <= 0 || c.syncedDownloadMTU <= 0 {
 		return ErrSessionInitFailed
 	}

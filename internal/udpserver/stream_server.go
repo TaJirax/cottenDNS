@@ -10,6 +10,7 @@ package udpserver
 import (
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cottenpickdns-go/internal/arq"
@@ -53,7 +54,24 @@ type Stream_server struct {
 	fecMu         sync.Mutex
 	fecEnc        *fec.Encoder
 	fecShardQueue [][]byte
+
+	// Loss-triggered FEC (tier-2 auto activation). When fecAuto is set, the
+	// stream measures its own download loss from the retransmit rate over a
+	// sliding window and turns FEC on (and scales parity) once loss crosses
+	// fecAutoThreshold. Enable-and-scale only: once on it stays on for the life
+	// of the stream (parity relaxes toward fecAutoBaseParity as loss subsides),
+	// so block numbering is never reset mid-flight. Auto params are guarded by
+	// fecMu; the window counters are atomic.
+	fecAuto          atomic.Bool
+	fecAutoBlock     int
+	fecAutoBaseParity int
+	fecAutoMaxParity int
+	fecAutoThreshold float64
+	fecWindowData    atomic.Uint64
+	fecWindowResends atomic.Uint64
 }
+
+const fecAutoWindow = 64
 
 func NewStreamServer(streamID uint16, sessionID uint16, arqConfig arq.Config, localConn io.ReadWriteCloser, mtu int, queueInitialCapacity int, logger arq.Logger) *Stream_server {
 	if queueInitialCapacity < 1 {
@@ -93,6 +111,8 @@ func (s *Stream_server) PushTXPacket(priority int, packetType uint8, sequenceNum
 	s.mu.Lock()
 	s.LastActivity = time.Now()
 	s.mu.Unlock()
+
+	s.recordFECSample(packetType)
 
 	priority = Enums.NormalizePacketPriority(packetType, priority)
 
@@ -387,6 +407,78 @@ func (s *Stream_server) EnableFEC(blockSize, parity int) {
 		s.fecEnc = fec.NewEncoder(blockSize, parity)
 	}
 	s.fecMu.Unlock()
+}
+
+// ConfigureAutoFEC arms loss-triggered FEC for this stream. FEC stays off (zero
+// overhead) until the measured download loss crosses threshold, at which point
+// it turns on with parity scaled to the loss, clamped to [baseParity, maxParity].
+func (s *Stream_server) ConfigureAutoFEC(blockSize, baseParity, maxParity int, threshold float64) {
+	if s == nil {
+		return
+	}
+	s.fecMu.Lock()
+	s.fecAutoBlock = blockSize
+	s.fecAutoBaseParity = baseParity
+	s.fecAutoMaxParity = maxParity
+	s.fecAutoThreshold = threshold
+	s.fecMu.Unlock()
+	s.fecAuto.Store(true)
+}
+
+// recordFECSample tallies a download data send (STREAM_DATA) or a retransmit
+// (STREAM_RESEND) into the current loss window. When the window fills it
+// re-evaluates whether to enable/scale auto FEC. Cheap no-op when auto is off.
+func (s *Stream_server) recordFECSample(packetType uint8) {
+	if s == nil || !s.fecAuto.Load() {
+		return
+	}
+	switch packetType {
+	case Enums.PACKET_STREAM_DATA:
+		if s.fecWindowData.Add(1) >= fecAutoWindow {
+			s.maybeAdjustAutoFEC()
+		}
+	case Enums.PACKET_STREAM_RESEND:
+		s.fecWindowResends.Add(1)
+	}
+}
+
+// maybeAdjustAutoFEC computes the loss over the just-closed window and, if it is
+// at or above the threshold, turns FEC on (or raises parity) scaled to the loss.
+// Below the threshold it relaxes an already-on encoder's parity toward the base
+// but never tears FEC down, so block numbering stays monotonic for the client.
+func (s *Stream_server) maybeAdjustAutoFEC() {
+	s.fecMu.Lock()
+	defer s.fecMu.Unlock()
+
+	data := s.fecWindowData.Swap(0)
+	resends := s.fecWindowResends.Swap(0)
+	if data == 0 {
+		return
+	}
+	loss := float64(resends) / float64(data+resends)
+
+	if loss < s.fecAutoThreshold {
+		if s.fecEnc != nil {
+			s.fecEnc.SetParity(s.fecAutoBaseParity)
+		}
+		return
+	}
+
+	parity := fec.ParityForLoss(s.fecAutoBlock, loss)
+	if parity < s.fecAutoBaseParity {
+		parity = s.fecAutoBaseParity
+	}
+	if s.fecAutoMaxParity > 0 && parity > s.fecAutoMaxParity {
+		parity = s.fecAutoMaxParity
+	}
+	if s.fecEnc == nil {
+		s.fecEnc = fec.NewEncoder(s.fecAutoBlock, parity)
+		if s.log != nil {
+			s.log.Debugf("Stream %d: auto-enabled FEC (loss=%.0f%%, parity=%d)", s.ID, loss*100, parity)
+		}
+	} else {
+		s.fecEnc.SetParity(parity)
+	}
 }
 
 // FECEnabled reports whether this stream diverts data through FEC.

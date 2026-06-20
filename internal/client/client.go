@@ -63,6 +63,10 @@ type Client struct {
 	syncedDownloadMTU   int
 	syncedUploadChars   int
 	safeUploadMTU       int
+	// mtuGroups holds the resolver clusters from the last MTU scan (Layer 2 of
+	// the adaptive per-group MTU strategy). Informational today: it is computed
+	// and logged but does not yet drive routing or per-group MTU selection.
+	mtuGroups           []mtuGroup
 	maxPackedBlocks     int
 	uploadCompression   uint8
 	downloadCompression uint8
@@ -209,6 +213,15 @@ type Connection struct {
 	UploadMTUChars   int
 	DownloadMTUBytes int
 	MTUResolveTime   time.Duration
+	// Measured loss fraction at the selected MTU edge (0..1). Populated only
+	// when loss-aware probing is enabled (MTU_PROBE_SAMPLES > 1); 0 otherwise.
+	UploadMTULoss   float64
+	DownloadMTULoss float64
+	// Backup marks a resolver that passed probing but cannot sustain the chosen
+	// session operating MTU. It is kept as a reserve (failover) rather than used
+	// in the active pool: the balancer only selects it when no primary resolver
+	// is available. Reset at the start of every MTU scan.
+	Backup bool
 }
 
 // Bootstrap initializes a new Client by loading configuration, setting up logging,

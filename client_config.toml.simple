@@ -278,6 +278,27 @@ MTU_TEST_RETRIES_LOGS = 5
 MTU_TEST_TIMEOUT_LOGS = 2.0
 MTU_TEST_PARALLELISM_LOGS = 32
 
+# Adaptive per-group MTU (loss-aware probing + resolver clustering).
+# MTU_PROBE_SAMPLES > 1 switches MTU probing from "accept if any retry succeeds"
+# to loss-aware: each candidate MTU is probed this many times and accepted only
+# if its measured loss fraction is <= MTU_MAX_LOSS. Larger samples give a more
+# accurate per-resolver MTU at the cost of more probe traffic during startup.
+# = 1 (default) keeps the classic retry behavior.
+MTU_PROBE_SAMPLES = 1
+MTU_MAX_LOSS = 0.0
+# Resolver clustering threshold: after probing, resolvers are grouped into MTU
+# bands; a new group starts wherever the gap between consecutive viable download
+# MTUs exceeds this fraction of the larger value (0.25 = 25%).
+MTU_GROUP_GAP_RATIO = 0.25
+# When true (default), the client runs the session at the throughput-optimal MTU
+# (the MTU D that maximizes D x number-of-resolvers-that-sustain-D) instead of
+# the global minimum. Resolvers that cannot sustain it are not dropped: they are
+# kept as backups (failover) and only carry traffic if the whole active pool
+# fails. This stops a few slow resolvers from throttling everyone while still
+# keeping them in reserve. Set false to use the legacy global-minimum MTU across
+# all valid resolvers.
+MTU_ADAPTIVE_GROUPING = true
+
 # ------------------------------------------------------------------------------
 # 7) Runtime Workers, Queues, and Timers
 # What this section does:

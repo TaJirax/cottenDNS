@@ -67,7 +67,6 @@ func (b *Balancer) SetConnections(connections []*Connection) {
 	indexByKey := make(map[string]int, size)
 	stats := make([]*connectionStats, size)
 	copied := make([]Connection, size)
-	valid := make([]int, 0, size)
 
 	for idx, conn := range connections {
 		if conn == nil {
@@ -76,15 +75,12 @@ func (b *Balancer) SetConnections(connections []*Connection) {
 		copied[idx] = *conn
 		indexByKey[conn.Key] = idx
 		stats[idx] = &connectionStats{}
-		if conn.IsValid {
-			valid = append(valid, idx)
-		}
 	}
 
 	b.snapshot.Store(&balancerSnapshot{
 		version:     b.version.Add(1),
 		connections: copied,
-		valid:       valid,
+		valid:       rebuildValidIndices(copied),
 		indexByKey:  indexByKey,
 		stats:       stats,
 	})
@@ -385,6 +381,62 @@ func (b *Balancer) GetAllValidConnections() []Connection {
 	return snapshotConnections(snap.connections, snap.valid)
 }
 
+// AllValidConnectionsIncludingBackup returns a copy of every IsValid connection
+// regardless of tier (primary and backup). Unlike GetAllValidConnections — which
+// returns only the active selection set — this exposes the full surviving pool so
+// the adaptive-MTU layer can re-derive the operating point over all resolvers
+// that are still reachable.
+func (b *Balancer) AllValidConnectionsIncludingBackup() []Connection {
+	snap := b.snapshot.Load()
+	if snap == nil {
+		return nil
+	}
+	out := make([]Connection, 0, len(snap.connections))
+	for _, conn := range snap.connections {
+		if conn.IsValid {
+			out = append(out, conn)
+		}
+	}
+	return out
+}
+
+// ReclassifyBackups recomputes every connection's Backup flag from the predicate
+// (true => backup/reserve) under the balancer lock and rebuilds the active
+// selection set. It updates both the snapshot and the backing sources so the
+// change is race-free with the health loop and visible to the rest of the client.
+func (b *Balancer) ReclassifyBackups(isBackup func(Connection) bool) {
+	if isBackup == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	snap := b.snapshot.Load()
+	if snap == nil {
+		return
+	}
+	connections := make([]Connection, len(snap.connections))
+	copy(connections, snap.connections)
+	for idx := range connections {
+		if idx < len(b.sources) && b.sources[idx] != nil {
+			connections[idx] = *b.sources[idx]
+		}
+		backup := connections[idx].IsValid && isBackup(connections[idx])
+		connections[idx].Backup = backup
+		if idx < len(b.sources) && b.sources[idx] != nil {
+			b.sources[idx].Backup = backup
+		}
+	}
+
+	b.snapshot.Store(&balancerSnapshot{
+		version:     b.version.Add(1),
+		connections: connections,
+		valid:       rebuildValidIndices(connections),
+		indexByKey:  snap.indexByKey,
+		stats:       snap.stats,
+	})
+}
+
 func (b *Balancer) AverageRTT(serverKey string) (time.Duration, bool) {
 	stats := b.statsForKey(serverKey)
 	if stats == nil {
@@ -399,14 +451,27 @@ func (b *Balancer) AverageRTT(serverKey string) (time.Duration, bool) {
 	return time.Duration(sum/count) * time.Microsecond, true
 }
 
+// rebuildValidIndices returns the balancer's active selection set. Primary
+// resolvers (valid and not Backup) are preferred; backup resolvers are included
+// only when no primary is available, so the session normally runs entirely on
+// the active pool but slow reserves still take over if every primary fails.
 func rebuildValidIndices(connections []Connection) []int {
-	valid := make([]int, 0, len(connections))
+	primary := make([]int, 0, len(connections))
+	var backup []int
 	for idx := range connections {
-		if connections[idx].IsValid {
-			valid = append(valid, idx)
+		if !connections[idx].IsValid {
+			continue
+		}
+		if connections[idx].Backup {
+			backup = append(backup, idx)
+		} else {
+			primary = append(primary, idx)
 		}
 	}
-	return valid
+	if len(primary) > 0 {
+		return primary
+	}
+	return append(primary, backup...)
 }
 
 func (b *Balancer) statsForKey(serverKey string) *connectionStats {

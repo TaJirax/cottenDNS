@@ -75,6 +75,24 @@ type ClientConfig struct {
 	MTUTestTimeoutLogs                    float64           `toml:"MTU_TEST_TIMEOUT_LOGS"`
 	MTUTestParallelismResolvers           int               `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
 	MTUTestParallelismLogs                int               `toml:"MTU_TEST_PARALLELISM_LOGS"`
+	// Adaptive per-group MTU (loss-aware probing + clustering).
+	// MTUProbeSamples > 1 enables loss-aware probing: each candidate MTU is
+	// probed this many times and accepted only if its measured loss is at or
+	// below MTUMaxLoss (instead of the legacy "pass if any retry succeeds").
+	// =1 (default) keeps the legacy retry behavior unchanged.
+	MTUProbeSamples                       int               `toml:"MTU_PROBE_SAMPLES"`
+	MTUMaxLoss                            float64           `toml:"MTU_MAX_LOSS"`
+	// MTUGroupGapRatio controls resolver clustering by viable MTU: a new group
+	// starts wherever the gap between consecutive sorted download MTUs exceeds
+	// this fraction of the larger value (e.g. 0.25 = 25%).
+	MTUGroupGapRatio                      float64           `toml:"MTU_GROUP_GAP_RATIO"`
+	// MTUAdaptiveGrouping, when true (default), raises the session MTU to the
+	// throughput-optimal operating point — the MTU D that maximizes D × (number
+	// of resolvers that can sustain D) — and holds resolvers that cannot sustain
+	// it in a backup tier (kept valid and used only as failover when the active
+	// pool is exhausted). When false, the legacy global-minimum MTU across all
+	// valid resolvers is used.
+	MTUAdaptiveGrouping                   bool              `toml:"MTU_ADAPTIVE_GROUPING"`
 	// Active MTU test parameters resolved from the startup mode at runtime.
 	// Populated by ApplyStartupModeMTU after the mode is known. Not loaded from TOML.
 	MTUTestRetries     int     `toml:"-"`
@@ -220,6 +238,10 @@ func defaultClientConfig() ClientConfig {
 		MTUTestTimeoutLogs:                    2.0,
 		MTUTestParallelismResolvers:           100,
 		MTUTestParallelismLogs:                32,
+		MTUProbeSamples:                       1,
+		MTUMaxLoss:                            0.0,
+		MTUGroupGapRatio:                      0.25,
+		MTUAdaptiveGrouping:                   true,
 		RX_TX_Workers:                         4,
 		TunnelProcessWorkers:                  4,
 		TunnelPacketTimeoutSec:                10.0,
@@ -489,6 +511,16 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.MTUTestTimeoutLogs = defaultFloatAtMostZero(cfg.MTUTestTimeoutLogs, 2.0)
 	cfg.MTUTestParallelismResolvers = defaultIntBelow(cfg.MTUTestParallelismResolvers, 1, 100)
 	cfg.MTUTestParallelismLogs = defaultIntBelow(cfg.MTUTestParallelismLogs, 1, 32)
+	cfg.MTUProbeSamples = defaultIntBelow(cfg.MTUProbeSamples, 1, 1)
+	if cfg.MTUMaxLoss < 0 {
+		cfg.MTUMaxLoss = 0
+	}
+	if cfg.MTUMaxLoss >= 1 {
+		cfg.MTUMaxLoss = 0.99
+	}
+	if cfg.MTUGroupGapRatio <= 0 {
+		cfg.MTUGroupGapRatio = 0.25
+	}
 	// Default the active MTU-test trio to the resolvers-mode values until the
 	// caller selects a startup mode via ApplyStartupModeMTU.
 	cfg.ApplyStartupModeMTU("resolvers")

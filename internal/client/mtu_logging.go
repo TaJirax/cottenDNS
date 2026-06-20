@@ -10,6 +10,7 @@
 package client
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,10 +67,11 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	c.log.Infof("<cyan>Valid Connections After MTU Testing:</cyan>")
 	c.log.Infof("%s", strings.Repeat("=", 80))
 	c.log.Infof(
-		"%-20s %-15s %-15s %-14s %-30s",
+		"%-20s %-12s %-12s %-10s %-14s %-30s",
 		"Resolver",
 		"Upload MTU",
 		"Download MTU",
+		"Loss",
 		"Resolve Time",
 		"Domain",
 	)
@@ -82,10 +84,11 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 		}
 
 		c.log.Infof(
-			"<cyan>%-20s</cyan> <green>%-15d</green> <green>%-15d</green> <yellow>%-14s</yellow> <blue>%-30s</blue>",
+			"<cyan>%-20s</cyan> <green>%-12d</green> <green>%-12d</green> <yellow>%-10s</yellow> <yellow>%-14s</yellow> <blue>%-30s</blue>",
 			conn.ResolverLabel,
 			conn.UploadMTUBytes,
 			conn.DownloadMTUBytes,
+			formatMTULoss(conn.UploadMTULoss, conn.DownloadMTULoss),
 			resolveTime,
 			conn.Domain,
 		)
@@ -122,6 +125,98 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 		c.syncedUploadMTU,
 		c.syncedDownloadMTU,
 	)
+}
+
+// logMTUOperatingPoint reports the Layer 3 best-group decision: the session MTU
+// the client chose to run at, how many resolvers form the active pool, and how
+// many slower resolvers were held back as backups (used only if the active pool
+// is exhausted).
+func (c *Client) logMTUOperatingPoint(uploadMTU, downloadMTU, poolSize, backups int) {
+	if !c.mtuInfoEnabled() {
+		return
+	}
+	c.log.Infof("%s", strings.Repeat("=", 80))
+	c.log.Infof(
+		"<green>[ADAPTIVE MTU]</green> Operating point chosen: upload=<cyan>%d</cyan> download=<cyan>%d</cyan> | active pool=<green>%d</green> resolver(s), <yellow>%d</yellow> slower resolver(s) kept as backups (used only if the active pool fails).",
+		uploadMTU,
+		downloadMTU,
+		poolSize,
+		backups,
+	)
+}
+
+// logMTUGroups reports the resolver clusters from clusterConnectionsByMTU and
+// marks which tier is the active data pool versus the demoted (slower) tiers, so
+// the operator can see at a glance which resolvers passed with the best numbers
+// and which passed only at lower MTUs.
+func (c *Client) logMTUGroups(groups []mtuGroup) {
+	if !c.mtuInfoEnabled() || len(groups) == 0 {
+		return
+	}
+
+	adaptive := c.cfg.MTUAdaptiveGrouping
+	c.log.Infof("%s", strings.Repeat("=", 80))
+	c.log.Infof(
+		"<cyan>[MTU TIERS]</cyan> <yellow>%d</yellow> resolver tier(s) by viable download MTU (best first):",
+		len(groups),
+	)
+	for i, g := range groups {
+		// A tier is in the active pool when its (minimum) download MTU is at least
+		// the session's applied download MTU; otherwise its members are backups.
+		status := "<green>ACTIVE</green>"
+		if adaptive && c.syncedDownloadMTU > 0 && g.DownloadMTU < c.syncedDownloadMTU {
+			status = "<yellow>backup</yellow>"
+		}
+		c.log.Infof(
+			"  <yellow>Tier %d</yellow> [%s]: download=<green>%d</green> upload=<green>%d</green> avg-loss=<cyan>%.0f%%</cyan> | <cyan>%d</cyan> resolver(s)",
+			i+1,
+			status,
+			g.DownloadMTU,
+			g.UploadMTU,
+			averageGroupDownloadLoss(g)*100,
+			len(g.Members),
+		)
+		if !c.mtuDebugEnabled() {
+			continue
+		}
+		for _, m := range g.Members {
+			c.log.Debugf(
+				"      <cyan>%-20s</cyan> up=%d down=%d loss(up/down)=%.0f%%/%.0f%% | <blue>%s</blue>",
+				m.ResolverLabel,
+				m.UploadMTUBytes,
+				m.DownloadMTUBytes,
+				m.UploadMTULoss*100,
+				m.DownloadMTULoss*100,
+				m.Domain,
+			)
+		}
+	}
+	if !adaptive {
+		c.log.Infof(
+			"<blue>Note:</blue> adaptive grouping is disabled (MTU_ADAPTIVE_GROUPING=false); the session runs at the global minimum MTU (upload=<cyan>%d</cyan>, download=<cyan>%d</cyan>).",
+			c.syncedUploadMTU,
+			c.syncedDownloadMTU,
+		)
+	}
+	c.log.Infof("%s", strings.Repeat("=", 80))
+}
+
+func averageGroupDownloadLoss(g mtuGroup) float64 {
+	if len(g.Members) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, m := range g.Members {
+		sum += m.DownloadMTULoss
+	}
+	return sum / float64(len(g.Members))
+}
+
+// formatMTULoss renders the upload/download loss measured at the selected MTU
+// edge as "up%/down%". With loss-aware probing disabled both values are 0, which
+// reads as "0%/0%" (i.e. the legacy pass/fail result).
+func formatMTULoss(uploadLoss, downloadLoss float64) string {
+	return fmt.Sprintf("%.0f%%/%.0f%%", uploadLoss*100, downloadLoss*100)
 }
 
 func formatResolverRTT(rtt time.Duration) string {
