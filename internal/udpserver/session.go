@@ -175,6 +175,10 @@ type sessionStore struct {
 	cookieBytes            [32]byte
 	cookieIndex            int
 	byID                   [maxServerSessionID + 1]*sessionRecord
+	// activeIDs is the set of currently-allocated session IDs. It lets the
+	// background sweeps iterate only live sessions instead of scanning the full
+	// 65536-slot byID array, which matters now that the session cap is uint16.
+	activeIDs              map[uint16]struct{}
 	bySig                  map[[sessionInitDataSize]byte]uint16
 	recentClosed           map[uint16]closedSessionRecord
 	orphanQueueCap         int
@@ -232,6 +236,7 @@ func newSessionStore(orphanQueueCap int, streamQueueCap int, options ...any) *se
 		}
 	}
 	return &sessionStore{
+		activeIDs:            make(map[uint16]struct{}, 64),
 		bySig:                make(map[[sessionInitDataSize]byte]uint16, 64),
 		recentClosed:         make(map[uint16]closedSessionRecord, 32),
 		cookieIndex:          32,
@@ -307,6 +312,7 @@ func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8,
 	record.Cookie = s.randomCookieLocked()
 
 	s.byID[slot] = record
+	s.activeIDs[uint16(slot)] = struct{}{}
 	s.activeCount++
 	s.bySig[signature] = uint16(slot)
 	s.updateNextReuseSweepLocked(record.reuseUntilUnixNano)
@@ -434,6 +440,7 @@ func (s *sessionStore) Close(sessionID uint16, now time.Time, retention time.Dur
 
 	delete(s.bySig, record.Signature)
 	s.byID[sessionID] = nil
+	delete(s.activeIDs, sessionID)
 	if s.activeCount > 0 {
 		s.activeCount--
 	}
@@ -468,7 +475,11 @@ func (s *sessionStore) Cleanup(now time.Time, idleTimeout time.Duration, closedR
 
 	expired := make([]closedSessionCleanup, 0, 8)
 	idleTimeoutNanos := idleTimeout.Nanoseconds()
-	for sessionID := 1; sessionID <= maxServerSessionID; sessionID++ {
+	activeSnapshot := make([]uint16, 0, len(s.activeIDs))
+	for id := range s.activeIDs {
+		activeSnapshot = append(activeSnapshot, id)
+	}
+	for _, sessionID := range activeSnapshot {
 		record := s.byID[sessionID]
 		if record == nil {
 			continue
@@ -481,6 +492,7 @@ func (s *sessionStore) Cleanup(now time.Time, idleTimeout time.Duration, closedR
 
 		delete(s.bySig, record.Signature)
 		s.byID[sessionID] = nil
+		delete(s.activeIDs, sessionID)
 		if s.activeCount > 0 {
 			s.activeCount--
 		}
@@ -501,32 +513,28 @@ func (s *sessionStore) Cleanup(now time.Time, idleTimeout time.Duration, closedR
 	return expired
 }
 
-func (s *sessionStore) SweepTerminalStreams(now time.Time, retention time.Duration) {
+// activeRecordsSnapshot returns the live session records, iterating only the
+// active-ID set (not the full 65536-slot byID array).
+func (s *sessionStore) activeRecordsSnapshot() []*sessionRecord {
 	s.mu.RLock()
-	records := make([]*sessionRecord, 0, len(s.byID))
-	for _, record := range s.byID {
-		if record != nil {
+	records := make([]*sessionRecord, 0, len(s.activeIDs))
+	for id := range s.activeIDs {
+		if record := s.byID[id]; record != nil {
 			records = append(records, record)
 		}
 	}
 	s.mu.RUnlock()
+	return records
+}
 
-	for _, record := range records {
+func (s *sessionStore) SweepTerminalStreams(now time.Time, retention time.Duration) {
+	for _, record := range s.activeRecordsSnapshot() {
 		record.cleanupTerminalStreams(now, retention)
 	}
 }
 
 func (s *sessionStore) SweepRecentlyClosedStreams(now time.Time) {
-	s.mu.RLock()
-	records := make([]*sessionRecord, 0, len(s.byID))
-	for _, record := range s.byID {
-		if record != nil {
-			records = append(records, record)
-		}
-	}
-	s.mu.RUnlock()
-
-	for _, record := range records {
+	for _, record := range s.activeRecordsSnapshot() {
 		record.pruneRecentlyClosed(now)
 	}
 }
@@ -612,7 +620,7 @@ func (s *sessionStore) CollectIdleDeferredSessions(now time.Time, idleTimeout ti
 	idleTimeoutNanos := idleTimeout.Nanoseconds()
 	idle := make([]idleDeferredCleanup, 0, 4)
 
-	for sessionID := 1; sessionID <= maxServerSessionID; sessionID++ {
+	for sessionID := range s.activeIDs {
 		record := s.byID[sessionID]
 		if record == nil || record.isClosed() {
 			continue

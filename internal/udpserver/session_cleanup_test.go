@@ -231,7 +231,7 @@ func TestSessionStoreCleanupReturnsExpiredRecordForFollowupCleanup(t *testing.T)
 	record.ResponseMode = 1
 	record.setLastActivity(time.Now().Add(-2 * time.Minute))
 
-	store.byID[record.ID] = record
+	putTestSession(store, record)
 	store.bySig[record.Signature] = record.ID
 	store.activeCount = 1
 
@@ -265,7 +265,7 @@ func TestSessionStoreCleanupKeepsActiveRecordOpen(t *testing.T) {
 	record.ResponseMode = 1
 	record.setLastActivity(time.Now())
 
-	store.byID[record.ID] = record
+	putTestSession(store, record)
 	store.bySig[record.Signature] = record.ID
 	store.activeCount = 1
 
@@ -286,7 +286,7 @@ func TestCollectIdleDeferredSessionsMarksIdleActiveSessionOncePerActivityWindow(
 	record := newTestSessionRecord(31)
 	staleActivity := time.Now().Add(-time.Minute)
 	record.setLastActivity(staleActivity)
-	store.byID[record.ID] = record
+	putTestSession(store, record)
 
 	idle := store.CollectIdleDeferredSessions(time.Now(), 10*time.Second)
 	if len(idle) != 1 || idle[0].ID != record.ID {
@@ -319,7 +319,7 @@ func TestDequeueSessionResponseScansActiveStreams(t *testing.T) {
 		t.Fatal("expected stream packet to queue")
 	}
 
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	pkt, ok := s.dequeueSessionResponse(record.ID, time.Now())
 	if !ok || pkt == nil {
@@ -336,7 +336,7 @@ func TestCleanupIdleDeferredSessionClearsDeferredStateWithoutClosingSession(t *t
 	record.Cookie = 7
 	record.setLastActivity(time.Now().Add(-time.Minute))
 	s.sessions = newSessionStore(8, 32)
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	packet := VpnProto.Packet{
 		SessionID:     record.ID,
@@ -445,7 +445,7 @@ func TestDequeueSessionResponseDuplicatesLastPackedControlBlock(t *testing.T) {
 		t.Fatalf("expected second control packet to queue")
 	}
 
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	first, ok := s.dequeueSessionResponse(record.ID, time.Now())
 	if !ok || first == nil {
@@ -566,7 +566,7 @@ func TestHandleStreamRSTRequestPreservesRstAckViaOrphanQueue(t *testing.T) {
 	s := newTestServerForStreamSyn("TCP")
 	record := newTestSessionRecord(14)
 	record.Cookie = 7
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	stream := record.getOrCreateStream(9, arq.Config{}, nil, nil)
 	if stream == nil {
@@ -620,7 +620,7 @@ func TestRecentlyClosedGracefulStreamSuppressesMissingStreamReset(t *testing.T) 
 	s := newTestServerForStreamSyn("TCP")
 	record := newTestSessionRecord(16)
 	record.Cookie = 9
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	stream := record.getOrCreateStream(12, arq.Config{}, nil, nil)
 	if stream == nil {
@@ -655,7 +655,7 @@ func TestRecentlyClosedGracefulStreamStillAcksLateCloseWrite(t *testing.T) {
 	s := newTestServerForStreamSyn("TCP")
 	record := newTestSessionRecord(24)
 	record.Cookie = 9
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	stream := record.getOrCreateStream(15, arq.Config{}, nil, nil)
 	if stream == nil {
@@ -691,7 +691,7 @@ func TestRecentlyClosedGracefulStreamLateDataQueuesRST(t *testing.T) {
 	s := newTestServerForStreamSyn("TCP")
 	record := newTestSessionRecord(25)
 	record.Cookie = 9
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	stream := record.getOrCreateStream(16, arq.Config{}, nil, nil)
 	if stream == nil {
@@ -730,7 +730,7 @@ func TestRecentlyClosedNonSuppressedStreamStillQueuesMissingStreamReset(t *testi
 	s := newTestServerForStreamSyn("TCP")
 	record := newTestSessionRecord(17)
 	record.Cookie = 9
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 	record.noteStreamClosed(14, time.Now(), false)
 
 	packet := VpnProto.Packet{
@@ -768,7 +768,7 @@ func TestSweepRecentlyClosedStreamsPrunesExpiredEntries(t *testing.T) {
 	record.RecentlyClosedTTL = 10 * time.Minute
 	record.RecentlyClosed[5] = recentlyClosedStreamRecord{ClosedAt: time.Now().Add(-11 * time.Minute)}
 	record.RecentlyClosed[6] = recentlyClosedStreamRecord{ClosedAt: time.Now().Add(-2 * time.Minute)}
-	sessions.byID[record.ID] = record
+	putTestSession(sessions, record)
 
 	sessions.SweepRecentlyClosedStreams(time.Now())
 
@@ -785,7 +785,7 @@ func TestPreprocessInboundPacketDoesNotQueueImmediateDataAck(t *testing.T) {
 	record := newTestSessionRecord(19)
 	record.Cookie = 11
 	record.DownloadCompression = 0
-	s.sessions.byID[record.ID] = record
+	putTestSession(s.sessions, record)
 
 	stream := record.getOrCreateStream(31, s.streamARQConfig(record.DownloadCompression), nil, s.log)
 	if stream == nil {
@@ -875,4 +875,14 @@ func TestClosedSessionRecordRejectsPostCloseStreamAccess(t *testing.T) {
 	if _, ok := record.getStream(9); ok {
 		t.Fatal("expected ensureStream0 to no-op after close")
 	}
+}
+
+// putTestSession registers a record in both byID and the active-ID set, matching
+// the production insert path so the active-set sweeps see it.
+func putTestSession(s *sessionStore, record *sessionRecord) {
+	s.byID[record.ID] = record
+	if s.activeIDs == nil {
+		s.activeIDs = make(map[uint16]struct{})
+	}
+	s.activeIDs[record.ID] = struct{}{}
 }
