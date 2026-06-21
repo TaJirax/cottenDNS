@@ -26,15 +26,16 @@ Typical deployment is straightforward: run the server on a VPS with UDP/53 reach
 > [!NOTE]
 > DNS tunneling is constrained by resolver payload size, latency, rate limits, and packet loss. CottenpickDNS is built for usable connectivity under pressure, not for unrealistic benchmark-only claims or replacing a normal VPN on clean, high-bandwidth networks.
 
-## 💸 Financial Support
+## 🆕 What's New
 
-Financial support is optional. If you want to support ongoing development, use one of these wallet addresses:
+Recent work focused on throughput on mixed resolver fleets and survivability under heavy loss:
 
-| 💰 Network | 🔐 Address |
-| --- | --- |
-| TON | `UQDfjVk2UdpiMg-bsxqoLa0O_icuaF20D-wWJgIJwK1Ha2Ul` |
-| USDT Tron (TRC20) | `TR8ibZGKutPKoDm5nMbHFwGPFBuMKwjG6j` |
-| USDT BNB Smart Chain (BEP20) | `0x8c45d6bae8a5a572b2a776779fe0bcae3d3f9107` |
+- **Adaptive per-group MTU.** Instead of forcing the slowest resolver's MTU on everyone, the client measures each resolver and runs the session at the throughput-optimal operating point — the MTU that maximizes `MTU × resolvers that sustain it`, jointly over upload and download. Slower resolvers are not dropped: they are kept as **reserves** and promoted automatically (with hysteresis to avoid churn) if the active pool degrades.
+- **Three explicit resolver states.** MTU testing now flags every resolver as **active**, **reserve** (backup/failover), or **invalid**, with a clear `[RESOLVER STATES]` and per-tier summary in the logs.
+- **Loss-triggered FEC.** Download-path Reed-Solomon FEC can turn on automatically per stream once measured loss crosses a threshold, scaling parity to the loss (zero overhead while the link is healthy) — built to keep working in very high-loss conditions.
+- **More transport channels, accepted by default.** Tunnel responses can ride over **NULL** and **HTTPS/SVCB** records in addition to TXT/CNAME/A; the server auto-accepts whichever query type the client rotates to.
+- **MTU-weighted balancing.** A new strategy sends each resolver traffic in proportion to its download MTU.
+- **Safer caching & bigger session space.** Log-based fast-start is now hybrid (cached resolvers are trusted but a new/changed resolver list is always re-scanned), and the session ID space was widened to 65535.
 
 ## 🧭 Quick Navigation
 
@@ -53,11 +54,11 @@ Financial support is optional. If you want to support ongoing development, use o
 | Network Reality | CottenpickDNS Response |
 | --- | --- |
 | 📏 DNS payloads are small | Low protocol overhead, DNS-safe encoding, active MTU discovery |
-| 📉 Packet loss is normal | ARQ windows, ACK/NACK, retransmission timers, terminal drain handling |
-| 📡 Resolvers degrade or disappear | Health checks, runtime auto-disable, background recheck, stream failover |
-| ⬆️ Upload is often the bottleneck | Separate duplication controls for data, ACKs, setup, and control packets |
-| 🕒 Startup can be expensive | Resolver cache logs and log-based startup mode |
-| 🧪 Resolver behavior is inconsistent | Per-resolver MTU validation and balancing strategies |
+| 📉 Packet loss is normal | ARQ windows, ACK/NACK, retransmission timers, terminal drain handling, and optional/auto download-path Reed-Solomon FEC |
+| 📡 Resolvers degrade or disappear | Health checks, runtime auto-disable, background recheck, stream failover, and reserve resolvers promoted automatically when the active pool shrinks |
+| ⬆️ Upload is often the bottleneck | Separate duplication controls for data, ACKs, setup, and control packets; upload-aware operating-point selection |
+| 🕒 Startup can be expensive | Resolver cache logs with hybrid log-based startup (cached resolvers trusted, new/changed ones re-scanned) |
+| 🧪 Resolver behavior is inconsistent | Per-resolver MTU validation, adaptive per-group operating MTU, active/reserve/invalid tiers, and MTU-weighted balancing |
 | 🧱 DPI/protocol filtering is common | DNS-only transport over ordinary UDP/53 query/response flow, rotating query types (TXT/CNAME/A/AAAA/…), type-matched responses, and duplication spread across multiple domains |
 | 🔐 Key/method policy varies per client | Server auto-detects the client's encryption method, so a client can change it without server reconfiguration |
 
@@ -67,8 +68,8 @@ Financial support is optional. If you want to support ongoing development, use o
 | --- | --- |
 | 🌐 Transport | DNS tunnel over UDP/53, delegated tunnel domains, multi-resolver routing |
 | 🧦 Local access | SOCKS5 proxy mode and raw TCP forwarding mode |
-| 📡 Resolver runtime | Random, round-robin, least-loss, and lowest-latency balancing |
-| 🔁 Reliability | ARQ, ACK/NACK, RTO, retry limits, stream cleanup, packed controls; optional download-path Reed-Solomon FEC for high-loss links (`FEC_DOWNLOAD_ENABLED`) |
+| 📡 Resolver runtime | Random, round-robin, least-loss, lowest-latency, and MTU-weighted balancing; adaptive per-group operating MTU with active/reserve/invalid tiers |
+| 🔁 Reliability | ARQ, ACK/NACK, RTO, retry limits, stream cleanup, packed controls; download-path Reed-Solomon FEC, always-on (`FEC_DOWNLOAD_ENABLED`) or loss-triggered/auto (`FEC_AUTO_ENABLED`) |
 | 📦 Efficiency | MTU discovery, packet packing, optional base encoding, ZSTD/LZ4/ZLIB |
 | 🕵️ Anti-fingerprinting | Configurable query-type rotation (`QUERY_TYPES`), response RR-type matching the server accepts by default (TXT→TXT, NULL→NULL, HTTPS/SVCB→service-binding, A→A-records, others→CNAME with TXT fallback), domain-diverse packet duplication (`DUPLICATION_PREFER_DISTINCT_DOMAINS`) |
 | 🔐 Security | None, XOR, ChaCha20, AES-128-GCM, AES-192-GCM, AES-256-GCM; server-side encryption-method auto-detection (`ENCRYPTION_AUTO_DETECT`) |
