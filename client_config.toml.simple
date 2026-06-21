@@ -143,6 +143,8 @@ LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS = 60.0
 # 2 = Round Robin
 # 3 = Least Loss
 # 4 = Lowest Latency
+# 5 = MTU-weighted (active-pool resolvers get traffic in proportion to their
+#     download MTU, so faster resolvers carry proportionally more)
 # Modes 3 and 4 use runtime feedback from sends/successes.
 RESOLVER_BALANCING_STRATEGY = 3
 

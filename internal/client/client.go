@@ -310,6 +310,12 @@ func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, override
 			conn.UploadMTUBytes = e.UploadMTU
 			conn.DownloadMTUBytes = e.DownloadMTU
 			conn.UploadMTUChars = c.encodedCharsForPayload(e.UploadMTU)
+			conn.UploadMTULoss = float64(e.UploadLossPerMille) / 1000
+			conn.DownloadMTULoss = float64(e.DownloadLossPerMille) / 1000
+			// Tiers (primary vs backup) are intentionally NOT restored from the
+			// log; they are re-derived from these per-resolver MTUs by
+			// finalizeMTUSelection during startup, so the operating point always
+			// reflects the resolver set actually present this run.
 		}
 	}
 

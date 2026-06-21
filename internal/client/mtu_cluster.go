@@ -82,13 +82,15 @@ func clusterConnectionsByMTU(conns []Connection, gapRatio float64) []mtuGroup {
 }
 
 // selectMTUOperatingPoint chooses the throughput-optimal session MTU over the
-// valid connections (Layer 3, "best-group" strategy). For every distinct viable
-// download MTU D it forms the pool of resolvers that can sustain D and scores it
-// as D × len(pool); the winning D balances per-packet size against resolver
-// count, so a few slow resolvers cannot throttle the session and a single fast
-// outlier cannot strand the crowd. It returns the chosen upload/download MTU
-// (the safe minimum within the winning pool) and the pool size. Returns zeros
-// when there is nothing to choose from.
+// valid connections (Layer 3, "best-group" strategy). It jointly optimizes both
+// directions: for each resolver's own (upload, download) pair taken as a
+// candidate floor (Uc, Dc), it forms the pool of resolvers that sustain BOTH
+// (upload ≥ Uc and download ≥ Dc) and scores it as (U + D) × len(pool), where
+// (U, D) are the safe minimums within that pool. The winning point balances
+// per-packet size against resolver count in both directions, so a few slow
+// resolvers — whether slow on upload or download — cannot throttle the session,
+// and a single fast outlier cannot strand the crowd. Returns the chosen
+// upload/download MTU and the pool size, or zeros when there is nothing to pick.
 func selectMTUOperatingPoint(conns []Connection) (uploadMTU, downloadMTU, poolSize int) {
 	type cand struct{ upload, download int }
 	cands := make([]cand, 0, len(conns))
@@ -101,32 +103,31 @@ func selectMTUOperatingPoint(conns []Connection) (uploadMTU, downloadMTU, poolSi
 		return 0, 0, 0
 	}
 
-	seen := make(map[int]struct{}, len(cands))
 	bestScore := -1
-	for _, candidate := range cands {
-		d := candidate.download
-		if _, dup := seen[d]; dup {
-			continue
-		}
-		seen[d] = struct{}{}
-
+	for _, floor := range cands {
 		pool := 0
-		minUpload := 0
+		minUpload, minDownload := 0, 0
 		for _, c := range cands {
-			if c.download < d {
+			if c.upload < floor.upload || c.download < floor.download {
 				continue
 			}
 			pool++
 			if minUpload == 0 || c.upload < minUpload {
 				minUpload = c.upload
 			}
+			if minDownload == 0 || c.download < minDownload {
+				minDownload = c.download
+			}
 		}
-		score := d * pool
-		// Prefer higher score; tie-break toward the larger MTU (faster per packet).
-		if score > bestScore || (score == bestScore && d > downloadMTU) {
+		if pool == 0 {
+			continue
+		}
+		score := (minUpload + minDownload) * pool
+		// Prefer higher score; tie-break toward the larger download MTU.
+		if score > bestScore || (score == bestScore && minDownload > downloadMTU) {
 			bestScore = score
-			downloadMTU = d
 			uploadMTU = minUpload
+			downloadMTU = minDownload
 			poolSize = pool
 		}
 	}

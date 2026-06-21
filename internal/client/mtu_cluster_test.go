@@ -98,6 +98,25 @@ func TestSelectMTUOperatingPoint_DropsSlowOutliers(t *testing.T) {
 	}
 }
 
+func TestSelectMTUOperatingPoint_UploadLaggardBecomesBackup(t *testing.T) {
+	// 40 resolvers good on both axes, plus one with a fine download but a very
+	// low upload. The joint optimizer must not let that one upload-laggard cap
+	// the session upload: it should be excluded from the winning pool.
+	conns := make([]Connection, 0, 41)
+	for i := 0; i < 40; i++ {
+		conns = append(conns, Connection{IsValid: true, UploadMTUBytes: 200, DownloadMTUBytes: 4000})
+	}
+	conns = append(conns, Connection{IsValid: true, UploadMTUBytes: 40, DownloadMTUBytes: 4000})
+
+	u, d, pool := selectMTUOperatingPoint(conns)
+	if u != 200 {
+		t.Errorf("upload operating MTU = %d, want 200 (laggard excluded)", u)
+	}
+	if d != 4000 || pool != 40 {
+		t.Errorf("got d=%d pool=%d, want d=4000 pool=40", d, pool)
+	}
+}
+
 func TestSelectMTUOperatingPoint_KeepsCrowdOverOutlier(t *testing.T) {
 	// 1 very-fast resolver (8000) + 50 at 1000. score(8000)=8000 loses to
 	// score(1000)=51000, so the crowd wins and nobody is dropped.
@@ -188,6 +207,84 @@ func TestReclassifyBackups_PromotesSurvivorsAtLowerMTU(t *testing.T) {
 	}
 }
 
+func TestBalancingMTUWeighted_BiasesTowardLargerMTU(t *testing.T) {
+	conns := []*Connection{
+		{Key: "big", IsValid: true, DownloadMTUBytes: 4000},
+		{Key: "small", IsValid: true, DownloadMTUBytes: 1000},
+	}
+	b := NewBalancer(BalancingMTUWeighted)
+	b.SetConnections(conns)
+
+	counts := map[string]int{}
+	const n = 4000
+	for i := 0; i < n; i++ {
+		c, ok := b.GetBestConnection()
+		if !ok {
+			t.Fatal("expected a connection")
+		}
+		counts[c.Key]++
+	}
+	// Expected ~80% big / ~20% small (4000:1000). Allow a wide tolerance band.
+	if counts["big"] <= counts["small"]*2 {
+		t.Fatalf("expected 'big' to dominate ~4:1, got big=%d small=%d", counts["big"], counts["small"])
+	}
+}
+
+func TestResolverTierCounts_ThreeStates(t *testing.T) {
+	c := &Client{}
+	c.connections = []Connection{
+		{IsValid: true},                // active
+		{IsValid: true},                // active
+		{IsValid: true, Backup: true},  // reserve
+		{IsValid: false},               // invalid
+		{IsValid: false},               // invalid
+		{IsValid: false},               // invalid
+	}
+	active, reserve, invalid := c.resolverTierCounts()
+	if active != 2 || reserve != 1 || invalid != 3 {
+		t.Fatalf("got active=%d reserve=%d invalid=%d, want 2/1/3", active, reserve, invalid)
+	}
+	if active+reserve+invalid != len(c.connections) {
+		t.Fatalf("tier counts (%d) do not sum to total (%d)", active+reserve+invalid, len(c.connections))
+	}
+}
+
+func TestConnectionsWithoutPreknownMTU(t *testing.T) {
+	conns := []Connection{
+		{IsValid: true, DownloadMTUBytes: 4000}, // preknown -> skip
+		{IsValid: false},                        // new resolver -> scan
+		{IsValid: true, DownloadMTUBytes: 0},    // valid but no MTU -> scan
+		{IsValid: true, DownloadMTUBytes: 1000}, // preknown -> skip
+	}
+	idx := connectionsWithoutPreknownMTU(conns)
+	if len(idx) != 2 || idx[0] != 1 || idx[1] != 2 {
+		t.Fatalf("got indices %v, want [1 2] (only un-cached resolvers scanned)", idx)
+	}
+}
+
+func TestMTUShouldAdoptOperatingPoint_Hysteresis(t *testing.T) {
+	// No current point yet -> adopt.
+	if !mtuShouldAdoptOperatingPoint(0, 0, 4000, 0) {
+		t.Error("should adopt when no current point exists")
+	}
+	// Current point stranded (curPool == 0) -> adopt even if smaller.
+	if !mtuShouldAdoptOperatingPoint(200, 4000, 1000, 0) {
+		t.Error("should adopt when current MTU is stranded")
+	}
+	// Current sustainable, new only marginally larger (< 12.5%) -> keep stable.
+	if mtuShouldAdoptOperatingPoint(200, 4000, 4200, 5) {
+		t.Error("should NOT adopt a marginal (<12.5%) improvement (hysteresis)")
+	}
+	// Current sustainable, new materially larger (> 12.5%) -> adopt.
+	if !mtuShouldAdoptOperatingPoint(200, 4000, 4600, 5) {
+		t.Error("should adopt a material (>12.5%) improvement")
+	}
+	// Current sustainable, new smaller but pool fine -> keep stable (no churn).
+	if mtuShouldAdoptOperatingPoint(200, 4000, 1000, 5) {
+		t.Error("should NOT lower the MTU while the current pool is healthy")
+	}
+}
+
 func TestEvaluateMTUCandidate_LossAware(t *testing.T) {
 	// 4 samples, accept threshold 25% loss => at most 1 of 4 may fail.
 	c := &Client{cfg: config.ClientConfig{MTUProbeSamples: 4, MTUMaxLoss: 0.25}}
@@ -205,17 +302,42 @@ func TestEvaluateMTUCandidate_LossAware(t *testing.T) {
 		t.Errorf("loss = %.2f, want 0.25", loss)
 	}
 
-	// Fail 2 of 4 -> loss 50% -> rejected.
+	// Fail the first 2 of 4 -> exceeds the 1-failure budget -> rejected. With
+	// coarse-then-refine the sampler stops as soon as the 2nd failure locks the
+	// reject, so only 2 probes are sent and the reported loss is approximate
+	// (failures / sampled), not the full-K 0.5.
 	calls = 0
 	ok, _, loss = c.evaluateMTUCandidate(context.Background(), 200, func(int, bool) (bool, time.Duration, error) {
 		calls++
 		return calls > 2, time.Millisecond, nil // first 2 fail
 	})
 	if ok {
-		t.Errorf("expected reject at 50%% loss, got accept")
+		t.Errorf("expected reject when failures exceed budget, got accept")
 	}
-	if loss != 0.5 {
-		t.Errorf("loss = %.2f, want 0.5", loss)
+	if calls != 2 {
+		t.Errorf("expected early-exit after 2 probes, got %d", calls)
+	}
+	if loss < 0.5 {
+		t.Errorf("approx loss = %.2f, want >= 0.5 on early reject", loss)
+	}
+}
+
+func TestEvaluateMTUCandidate_EarlyAcceptStopsProbing(t *testing.T) {
+	// 6 samples, 0 loss budget -> needs all 6 to pass, but reject locks on the
+	// first failure. Here every probe passes; with a 50% budget only
+	// neededSuccess = 3 probes are required before accept is locked.
+	c := &Client{cfg: config.ClientConfig{MTUProbeSamples: 6, MTUMaxLoss: 0.5}}
+	calls := 0
+	ok, _, _ := c.evaluateMTUCandidate(context.Background(), 200, func(int, bool) (bool, time.Duration, error) {
+		calls++
+		return true, time.Millisecond, nil
+	})
+	if !ok {
+		t.Fatal("expected accept when all probes pass")
+	}
+	// allowedFail = floor(6*0.5)=3, neededSuccess = 6-3 = 3.
+	if calls != 3 {
+		t.Errorf("expected early-accept after 3 probes, got %d", calls)
 	}
 }
 

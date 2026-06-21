@@ -21,6 +21,10 @@ const (
 	BalancingRoundRobin        = 2
 	BalancingLeastLoss         = 3
 	BalancingLowestLatency     = 4
+	// BalancingMTUWeighted selects active-pool resolvers with probability
+	// proportional to their download MTU, so a resolver that can carry 4000-byte
+	// downloads receives proportionally more traffic than one capped at 1000.
+	BalancingMTUWeighted = 5
 )
 
 type Balancer struct {
@@ -289,6 +293,8 @@ func (b *Balancer) GetBestConnection() (Connection, bool) {
 	case BalancingRandom:
 		idx := snap.valid[b.nextRandom()%uint64(len(snap.valid))]
 		return derefConnection(snap.connections, idx)
+	case BalancingMTUWeighted:
+		return b.weightedByMTUConnection(snap)
 	case BalancingLeastLoss:
 		if !b.hasLossSignal(snap) {
 			return b.roundRobinBestConnection(snap)
@@ -311,7 +317,7 @@ func (b *Balancer) GetBestConnectionExcluding(excludeKey string) (Connection, bo
 	}
 
 	switch b.strategy {
-	case BalancingRandom:
+	case BalancingRandom, BalancingMTUWeighted:
 		ordered := b.rotatedValidIndices(snap, 1)
 		for _, idx := range ordered {
 			conn, ok := derefConnection(snap.connections, idx)
@@ -358,6 +364,8 @@ func (b *Balancer) GetUniqueConnections(requiredCount int) []Connection {
 	switch b.strategy {
 	case BalancingRandom:
 		return b.selectRandom(snap, count)
+	case BalancingMTUWeighted:
+		return b.selectRoundRobin(snap, count)
 	case BalancingLeastLoss:
 		if !b.hasLossSignal(snap) {
 			return b.selectRoundRobin(snap, count)
@@ -700,6 +708,40 @@ func (b *Balancer) latencyScore(snap *balancerSnapshot, idx int) uint64 {
 		return 999000
 	}
 	return sum / count
+}
+
+// weightedByMTUConnection picks an active-pool resolver with probability
+// proportional to its download MTU. Resolvers with an unknown (≤0) MTU get a
+// unit weight so they are still reachable. Falls back to round-robin when there
+// is no usable weight signal.
+func (b *Balancer) weightedByMTUConnection(snap *balancerSnapshot) (Connection, bool) {
+	if snap == nil || len(snap.valid) == 0 {
+		return Connection{}, false
+	}
+	total := uint64(0)
+	for _, idx := range snap.valid {
+		w := snap.connections[idx].DownloadMTUBytes
+		if w <= 0 {
+			w = 1
+		}
+		total += uint64(w)
+	}
+	if total == 0 {
+		return b.roundRobinBestConnection(snap)
+	}
+
+	r := b.nextRandom() % total
+	for _, idx := range snap.valid {
+		w := uint64(snap.connections[idx].DownloadMTUBytes)
+		if snap.connections[idx].DownloadMTUBytes <= 0 {
+			w = 1
+		}
+		if r < w {
+			return derefConnection(snap.connections, idx)
+		}
+		r -= w
+	}
+	return derefConnection(snap.connections, snap.valid[len(snap.valid)-1])
 }
 
 func (b *Balancer) roundRobinBestConnection(snap *balancerSnapshot) (Connection, bool) {

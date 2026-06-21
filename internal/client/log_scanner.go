@@ -31,6 +31,11 @@ type ResolverCacheEntry struct {
 	Domain      string
 	UploadMTU   int
 	DownloadMTU int
+	// UploadLossPerMille / DownloadLossPerMille are the loss measured at the MTU
+	// edge (parts per 1000), preserved across log-mode restarts for the UI. They
+	// are optional in the log line; absent tokens leave them 0.
+	UploadLossPerMille   int
+	DownloadLossPerMille int
 	// LastSeen is the timestamp of the most recent log line for this entry.
 	LastSeen time.Time
 	// AppearCount is the number of times this entry appeared across all scanned files.
@@ -181,14 +186,24 @@ func parseResolverCacheLine(line string) (ResolverCacheEntry, bool) {
 		return ResolverCacheEntry{}, false
 	}
 
-	return ResolverCacheEntry{
+	entry := ResolverCacheEntry{
 		IP:          host,
 		Port:        port,
 		Domain:      domain,
 		UploadMTU:   upMTU,
 		DownloadMTU: downMTU,
 		LastSeen:    ts,
-	}, true
+	}
+	// Optional loss tokens (UPLOSS=/DOWNLOSS=, parts per 1000) preserved for the
+	// UI; older logs without them parse fine and leave loss at 0.
+	for _, f := range fields[5:] {
+		if v, err := parseCacheKVInt(f, "UPLOSS"); err == nil {
+			entry.UploadLossPerMille = v
+		} else if v, err := parseCacheKVInt(f, "DOWNLOSS"); err == nil {
+			entry.DownloadLossPerMille = v
+		}
+	}
+	return entry, true
 }
 
 // parseCacheKVInt parses "KEY=value" and returns the integer value.

@@ -31,6 +31,11 @@ const (
 	mtuProbeBase64Reply = 1
 	defaultMTUMinFloor  = 10
 	defaultUploadMaxCap = 512
+	// mtuHysteresisDivisor sets the re-clustering hysteresis band: a freshly
+	// derived download MTU must exceed the current one by more than 1/N (here
+	// 1/8 = 12.5%) before the session adopts it, so flapping resolvers do not
+	// churn the session MTU. Stranded (unsustainable) points always move.
+	mtuHysteresisDivisor = 8
 )
 
 var (
@@ -147,7 +152,41 @@ func (c *Client) finalizeMTUSelection(validConns []Connection, minUpload, minDow
 		c.logMTUOperatingPoint(opUpload, opDownload, poolSize, backups)
 	}
 	c.logMTUGroups(groups)
+	c.logResolverTierSummary()
 	return validConns
+}
+
+// resolverTierCounts classifies every connection produced by MTU testing into
+// the three operational states: active (valid and selected into the data pool),
+// reserve (valid but held back as a backup because it cannot sustain the session
+// MTU), and invalid (failed probing). active + reserve + invalid == len(conns).
+func (c *Client) resolverTierCounts() (active, reserve, invalid int) {
+	for i := range c.connections {
+		conn := &c.connections[i]
+		switch {
+		case !conn.IsValid:
+			invalid++
+		case conn.Backup:
+			reserve++
+		default:
+			active++
+		}
+	}
+	return active, reserve, invalid
+}
+
+// logResolverTierSummary prints the final three-state breakdown after MTU
+// testing so the operator can see exactly how many resolvers are active, held in
+// reserve, and rejected.
+func (c *Client) logResolverTierSummary() {
+	if !c.mtuInfoEnabled() {
+		return
+	}
+	active, reserve, invalid := c.resolverTierCounts()
+	c.log.Infof(
+		"<cyan>[RESOLVER STATES]</cyan> active=<green>%d</green> reserve=<yellow>%d</yellow> invalid=<red>%d</red> (total <cyan>%d</cyan>)",
+		active, reserve, invalid, active+reserve+invalid,
+	)
 }
 
 // recomputeMTUOperatingPoint re-derives the adaptive operating point over the
@@ -169,18 +208,78 @@ func (c *Client) recomputeMTUOperatingPoint() {
 		return
 	}
 
+	curUp, curDown := c.syncedUploadMTU, c.syncedDownloadMTU
+
+	// Count how many surviving resolvers can still carry the CURRENT operating
+	// MTU. Zero means the current point is stranded (its pool died) and we must
+	// move — usually down to the survivors.
+	curPool := 0
+	if curDown > 0 && curUp > 0 {
+		for _, cc := range conns {
+			if cc.DownloadMTUBytes >= curDown && cc.UploadMTUBytes >= curUp {
+				curPool++
+			}
+		}
+	}
+
+	// Hysteresis: avoid churning the session MTU on small fluctuations or
+	// flapping resolvers. Adopt the freshly derived point only when there is no
+	// current point yet, the current one is stranded, or the new one is a
+	// materially better download MTU (> ~12.5% larger). Otherwise keep the
+	// current MTU stable and just re-tier resolvers against it.
+	if !mtuShouldAdoptOperatingPoint(curUp, curDown, d, curPool) {
+		c.balancer.ReclassifyBackups(func(cc Connection) bool {
+			return cc.DownloadMTUBytes < curDown || cc.UploadMTUBytes < curUp
+		})
+		return
+	}
+
 	c.balancer.ReclassifyBackups(func(cc Connection) bool {
 		return cc.DownloadMTUBytes < d || cc.UploadMTUBytes < u
 	})
-
-	prevUp, prevDown := c.syncedUploadMTU, c.syncedDownloadMTU
 	c.applySyncedMTUState(u, d, c.encodedCharsForPayload(u))
-	if (prevUp != u || prevDown != d) && c.mtuInfoEnabled() {
+	if (curUp != u || curDown != d) && c.mtuInfoEnabled() {
+		reason := "better pool available"
+		if curPool == 0 && curDown > 0 {
+			reason = "previous operating MTU stranded"
+		}
 		c.log.Infof(
-			"<green>[ADAPTIVE MTU]</green> Re-derived operating point at session (re)start: upload=<cyan>%d</cyan> download=<cyan>%d</cyan> (was %d/%d) | active pool=<green>%d</green> resolver(s).",
-			u, d, prevUp, prevDown, n,
+			"<green>[ADAPTIVE MTU]</green> Re-derived operating point at session (re)start: upload=<cyan>%d</cyan> download=<cyan>%d</cyan> (was %d/%d) | active pool=<green>%d</green> | %s.",
+			u, d, curUp, curDown, n, reason,
 		)
 	}
+}
+
+// mtuShouldAdoptOperatingPoint applies the re-clustering hysteresis policy: a
+// freshly derived download MTU is adopted only when there is no current point
+// yet, the current point is stranded (no survivor can carry it, curPool == 0),
+// or the new download MTU is materially larger (> 1/mtuHysteresisDivisor). This
+// keeps the session MTU stable under flapping/bad-resolver conditions.
+func mtuShouldAdoptOperatingPoint(curUp, curDown, newDown, curPool int) bool {
+	switch {
+	case curDown <= 0 || curUp <= 0:
+		return true
+	case curPool == 0:
+		return true
+	case newDown > curDown+curDown/mtuHysteresisDivisor:
+		return true
+	default:
+		return false
+	}
+}
+
+// connectionsWithoutPreknownMTU returns the indices of connections that did not
+// receive an MTU from the cache (invalid or zero download MTU) and therefore
+// still need probing in a hybrid log-mode start.
+func connectionsWithoutPreknownMTU(conns []Connection) []int {
+	out := make([]int, 0, len(conns))
+	for i := range conns {
+		if conns[i].IsValid && conns[i].DownloadMTUBytes > 0 {
+			continue
+		}
+		out = append(out, i)
+	}
+	return out
 }
 
 // markBackupResolversBelowMTU flags every valid connection that cannot sustain
@@ -586,7 +685,14 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn func(int, bool) (bool, time.Duration, error)) (bool, time.Duration, float64) {
 	samples := c.cfg.MTUProbeSamples
 	if samples > 1 {
-		success := 0
+		// Probe-cost control (coarse-then-refine): stop sampling this candidate as
+		// soon as the accept/reject verdict is locked — once enough successes make
+		// the loss budget unbeatable, or once failures exceed it — instead of
+		// always sending all K probes. The decision is identical to sampling the
+		// full K; only the probe count shrinks (helpful with large resolver lists).
+		allowedFail := int(float64(samples) * c.cfg.MTUMaxLoss)
+		neededSuccess := samples - allowedFail
+		success, failed := 0, 0
 		var sumRTT time.Duration
 		for i := 0; i < samples; i++ {
 			if err := ctx.Err(); err != nil {
@@ -601,18 +707,30 @@ func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn fun
 				if rtt > 0 {
 					sumRTT += rtt
 				}
+				if success >= neededSuccess {
+					break // accept locked: remaining probes cannot push loss over budget
+				}
+			} else {
+				failed++
+				if failed > allowedFail {
+					break // reject locked: loss already exceeds budget
+				}
 			}
 		}
-		loss := 1 - float64(success)/float64(samples)
+		sampled := success + failed
+		loss := 0.0
+		if sampled > 0 {
+			loss = float64(failed) / float64(sampled)
+		}
 		var avgRTT time.Duration
 		if success > 0 {
 			avgRTT = sumRTT / time.Duration(success)
 		}
-		ok := loss <= c.cfg.MTUMaxLoss
+		ok := failed <= allowedFail
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf(
-				"<cyan>[MTU]</cyan> Candidate %d bytes: loss=%.0f%% (%d/%d ok), accept=%v (max=%.0f%%)",
-				value, loss*100, success, samples, ok, c.cfg.MTUMaxLoss*100,
+				"<cyan>[MTU]</cyan> Candidate %d bytes: loss≈%.0f%% (%d ok / %d sampled of %d), accept=%v (max=%.0f%%)",
+				value, loss*100, success, sampled, samples, ok, c.cfg.MTUMaxLoss*100,
 			)
 		}
 		return ok, avgRTT, loss
@@ -996,12 +1114,23 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 		return ErrNoValidConnections
 	}
 
+	// Hybrid start: trust cached MTUs for resolvers that have a log entry, but
+	// still probe any resolver in the CURRENT list that has none — so a changed
+	// or extended resolver list is always fully covered. Caching is only a
+	// background accelerator for known resolvers; it never gates out new ones.
+	if scanned := c.scanConnectionsWithoutPreknownMTU(ctx); scanned > 0 && c.log != nil {
+		c.log.Infof(
+			"<green>⚡ Cache start: scanned <cyan>%d</cyan> resolver(s) not present in the cache (new/changed list)</green>",
+			scanned,
+		)
+	}
+
 	validConns, minUpload, minDownload, minUploadChars := summarizeValidMTUConnections(c.connections)
 	if len(validConns) == 0 {
 		return ErrNoValidConnections
 	}
 
-	// Persist the pre-known working resolvers to the resolver cache log.
+	// Persist the working resolvers (cached + freshly scanned) to the cache log.
 	for i := range c.connections {
 		conn := &c.connections[i]
 		if conn.IsValid {
@@ -1013,12 +1142,69 @@ func (c *Client) applyPreknownMTUsFromLog(ctx context.Context) error {
 
 	if c.log != nil {
 		c.log.Infof(
-			"<green>⚡ Using <cyan>%d</cyan> resolvers from log files (skipped full MTU scan)</green>",
+			"<green>⚡ Using <cyan>%d</cyan> resolvers (cache + fresh scan of new entries)</green>",
 			len(validConns),
 		)
 	}
 	c.finalizeMTUSelection(validConns, minUpload, minDownload, minUploadChars)
 	return nil
+}
+
+// scanConnectionsWithoutPreknownMTU probes only the connections that did not get
+// an MTU from the cache (resolvers new to the user's list). Preknown connections
+// are left untouched. Returns the number of connections scanned.
+func (c *Client) scanConnectionsWithoutPreknownMTU(ctx context.Context) int {
+	indices := connectionsWithoutPreknownMTU(c.connections)
+	if len(indices) == 0 {
+		return 0
+	}
+	for _, idx := range indices {
+		c.prepareConnectionMTUScanState(&c.connections[idx])
+	}
+
+	uploadCaps := c.precomputeUploadCaps()
+	total := len(c.connections)
+	workerCount := min(max(1, c.cfg.MTUTestParallelism), len(indices))
+	counters := &mtuScanCounters{}
+
+	if workerCount <= 1 {
+		for _, idx := range indices {
+			if ctx.Err() != nil {
+				break
+			}
+			conn := &c.connections[idx]
+			c.runConnectionMTUTest(ctx, conn, idx+1, total, uploadCaps[conn.Domain], counters)
+		}
+		return len(indices)
+	}
+
+	jobs := make(chan int, len(indices))
+	var wg sync.WaitGroup
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				conn := &c.connections[idx]
+				c.runConnectionMTUTest(ctx, conn, idx+1, total, uploadCaps[conn.Domain], counters)
+			}
+		}()
+	}
+	for _, idx := range indices {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return len(indices)
+		case jobs <- idx:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return len(indices)
 }
 
 func (c *Client) encodedCharsForPacketPayload(packetType uint8, payloadLen int) int {

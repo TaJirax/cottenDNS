@@ -10,9 +10,10 @@
 // future runs can start quickly by skipping the full MTU scan.
 //
 // Line format:
-//   <RFC3339>  <ip:port>  <domain>  UP=<n>  DOWN=<n>
+//   <RFC3339>  <ip:port>  <domain>  UP=<n>  DOWN=<n>  UPLOSS=<permille>  DOWNLOSS=<permille>
 // Example:
-//   2026-04-20T15:04:05Z  8.8.8.8:53  v.domain.com  UP=64  DOWN=120
+//   2026-04-20T15:04:05Z  8.8.8.8:53  v.domain.com  UP=64  DOWN=120  UPLOSS=0  DOWNLOSS=50
+// The UPLOSS/DOWNLOSS tokens are optional; older logs without them still parse.
 // ==============================================================================
 package client
 
@@ -80,12 +81,14 @@ func (c *Client) appendResolverCacheEntry(conn *Connection) {
 
 	endpoint := formatResolverEndpoint(conn.Resolver, conn.ResolverPort)
 	line := fmt.Sprintf(
-		"%s %s %s UP=%d DOWN=%d\n",
+		"%s %s %s UP=%d DOWN=%d UPLOSS=%d DOWNLOSS=%d\n",
 		time.Now().UTC().Format(time.RFC3339),
 		endpoint,
 		conn.Domain,
 		conn.UploadMTUBytes,
 		conn.DownloadMTUBytes,
+		int(conn.UploadMTULoss*1000+0.5),
+		int(conn.DownloadMTULoss*1000+0.5),
 	)
 
 	c.resolverCacheLogMu.Lock()
