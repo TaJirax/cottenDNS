@@ -34,7 +34,9 @@ Two structural facts drive almost every design decision below:
    itself silently truncates oversized answers. The reliability layer must treat
    loss as normal, not exceptional.
 
-Everything that follows is built around these two facts.
+The transport is UDP/53 by default, with an automatic fallback to
+**DNS-over-TCP/53** when UDP is filtered (§10). Everything that follows is built
+around the two facts above and applies to both transports.
 
 ---
 
@@ -329,41 +331,130 @@ an active prober.
 
 ---
 
-## 10. How the pieces fit together (loss-resistance stack)
+## 10. Transport diversity: DNS-over-TCP/53 fallback
 
-```
-Upload  (client → server):  adaptive duplication ── across diverse domains
-Both:                        ARQ (ACK/NACK, RTO, retransmit)  ← correctness backstop
-Download(server → client):   auto-FEC (Reed-Solomon)  ← reconstruct without round-trip
-Path selection:              adaptive per-group MTU + reserves + MTU-weighted balancing
-Anti-fingerprint:            query-type rotation + type-matched responses
-```
+**Problem.** The only data path used to be plain **UDP/53**. Highly restrictive
+networks frequently filter, truncate, or hijack UDP/53 while still allowing
+TCP/53. (DoH/DoT on 443 are often blocked outright in these environments, so they
+are deliberately *not* the chosen fallback.)
 
-Each layer degrades independently: FEC reduces retransmits, ARQ guarantees
-eventual delivery, duplication protects uploads, and the MTU/reserve logic keeps
-the path usable as resolvers come and go.
+**Server.** A DNS-over-TCP listener runs on the **same host:port** as UDP
+(`server_tcp.go`), reading RFC 1035 §4.2.2 length-prefixed messages and replying
+length-prefixed, routed through the **exact same** transport-agnostic
+`safeHandlePacket`. Default on (`TCP_LISTENER_ENABLED`), connection-capped,
+load-shedding, graceful shutdown — so all tunnel logic (sessions, FEC, channels,
+encryption) is shared with UDP, no duplication.
+
+**Client.** Client-wide transport via `RESOLVER_TRANSPORT = auto | udp | tcp`:
+- **`auto` (default)** probes over UDP first; if **zero** resolvers pass MTU
+  testing, it flips to TCP and **re-probes the whole fleet over TCP/53**. On a
+  UDP-working network TCP is never attempted (zero cost).
+- A `queryExchanger` abstraction makes the probe, session-init, and health paths
+  transport-agnostic.
+- A persistent **per-resolver TCP connection manager** (`tcp_data.go`) serves the
+  high-throughput data plane (a handshake-per-query would be far too slow). Each
+  connection's read loop feeds the **existing `rxChannel`**, so the inbound path
+  (`handleInboundPacket`) treats TCP and UDP responses identically. Lazy dial,
+  re-dial on failure, clean shutdown.
+
+**Why it helps.** It changes what is *possible* on UDP-blocked networks, not just
+what is faster. Because TCP wraps the whole DNS message, **every response channel
+(TXT/CNAME/A/NULL/HTTPS) works unchanged over TCP** — validated end-to-end.
 
 ---
 
-## 11. Validation summary
+## 11. Intelligent rate limiting (redistribution, not a global throttle)
+
+**Problem.** Over-sending to a resolver past its rate limit is self-defeating: it
+returns REFUSED/SERVFAIL (wasted round-trips + ARQ retransmits), silently drops
+queries (full RTO stalls), or — worst — flags/blocks the client IP. You never had
+that throughput; pushing harder only manufactures errors and risk.
+
+**Mechanism.** A per-resolver AIMD pacer (`resolver_pacer.go`). The client already
+sees the overload signal (`RCODE != 0` → `trackResolverFailure`, plus timeouts) at
+one choke point, `recordResolverHealthEvent`. On a throttle signal the resolver
+enters an exponentially-growing **cooldown window** and is deprioritized in
+selection (`orderByPacing` at the data-plane spread and control-packet
+selection); sustained success additively shrinks the window back to zero.
+
+**Why it doesn't hurt throughput.** It is **redistribution**: the client's total
+capacity is the sum of each resolver's sustainable rate; the pacer keeps each
+under its own ceiling and shifts overflow to resolvers with headroom, so the
+*aggregate* goes up and stays stable. It is **self-gating** (healthy resolvers,
+interval 0, are never paced — does nothing on a clean network) and **never idles**
+(a paced resolver is still used as a fallback when nothing else is free). It also
+lowers the burst fingerprint. Default on (`RESOLVER_RATE_LIMIT_ENABLED`).
+
+---
+
+## 12. QNAME reshaping (anti-fingerprint, desync-proof)
+
+**Problem.** The encoded payload used to ride as a single chain of uniformly
+**maximum-length (63-char)** labels under one domain — a classic DNS-tunnel
+fingerprint.
+
+**Mechanism.** `QNAME_LABEL_LENGTH` (1..63) controls the target label length;
+labels are split shorter and **jittered** per query (`qname_shape.go`), so the
+query name looks more like ordinary multi-label subdomains.
+
+**Why it can never desync client and server.** The receiver recovers the payload
+by **concatenating all labels and stripping the dots** (server `stripLabelDots`,
+client CNAME/A decoders) — label *boundaries are irrelevant to decoding*. The
+sender may split however it likes. The single invariant that must hold — the
+client's capacity math agreeing with how many labels the builder emits — is
+centralized in `qnameLabelCount`, shared by the wire builder, `encodedQNameLen`,
+and `CalculateMaxEncodedQNameChars`, so a name can never exceed 253 bytes. The
+default (63) is **byte-identical** to the legacy greedy split; reshaping is opt-in.
+
+**Trade-off.** Shorter labels mean more dots, i.e. less payload per query — a
+throughput/stealth knob the operator tunes (hence default 63).
+
+---
+
+## 13. How the pieces fit together (hostile-network stack)
+
+```
+Transport:                   UDP/53, auto-fallback to DNS-over-TCP/53 when UDP is blocked
+Upload  (client → server):   adaptive duplication ── across diverse domains
+Both:                        ARQ (ACK/NACK, RTO, retransmit)  ← correctness backstop
+Download(server → client):   auto-FEC (Reed-Solomon)  ← reconstruct without round-trip
+Path selection:              adaptive per-group MTU + reserves + MTU-weighted balancing
+Rate control:                per-resolver AIMD pacing (redistribute off throttling resolvers)
+Anti-fingerprint:            query-type rotation + type-matched responses + QNAME reshaping
+```
+
+Each layer degrades independently: FEC reduces retransmits, ARQ guarantees
+eventual delivery, duplication protects uploads, pacing avoids throttle/IP-blocks,
+the MTU/reserve logic keeps the path usable as resolvers come and go, and the TCP
+fallback keeps the tunnel alive when UDP/53 is filtered.
+
+---
+
+## 14. Validation summary
 
 - **Unit tests** across `fec`, `vpnproto`, `dnsparser`, `udpserver`, `client`,
   `config` — including FEC reconstruction at 75% loss, auto-FEC enable/scale on
   loss, joint operating-point selection, reserve promotion, hysteresis, hybrid
-  cache selection, MTU-weighted bias, and the new transport channels.
+  cache selection, MTU-weighted bias, the transport channels, the AIMD pacer
+  (throttle/recover, redistribution ordering), TCP framing, and QNAME-shaping
+  round-trip/bounds.
 - **Server-side validation** that the server honors and clamps the client's
-  per-session MTU (including a lowered value re-derived after primary-pool loss).
-- **End-to-end tests** (real client + server binaries over loopback): baseline
-  echo, encryption auto-detect, FEC-on download, and query-type rotation over
-  the new channels — each round-tripping 64 KB byte-for-byte.
+  per-session MTU (including a lowered value re-derived after primary-pool loss),
+  and the DNS-over-TCP framing/pipelining.
+- **End-to-end tests** (real client + server binaries over loopback), each a
+  byte-exact 64 KB echo: baseline; encryption auto-detect; FEC-on download;
+  query-type rotation over the new channels (UDP); full tunnel over **TCP/53**;
+  **TCP/53 + NULL/HTTPS/CNAME** together; and **reshaped QNAME + TCP/53 + the
+  non-TXT channels** stacked.
 - **Cross-compilation** verified for linux/amd64, linux/arm64, darwin/arm64,
   windows/amd64, android/arm64.
 
 ---
 
-## 12. Config quick reference (new/changed keys)
+## 15. Config quick reference (new/changed keys)
 
 **Server (`server_config.toml`):**
+- `TCP_LISTENER_ENABLED` (true) / `TCP_MAX_CONNS` (2048) — DNS-over-TCP/53 listener.
 - `ENCRYPTION_AUTO_DETECT` (true) — trial-decrypt the client's cipher.
 - `A_RECORD_DATA_DELIVERY` (false) — answer A queries with A-record data.
 - `FEC_DOWNLOAD_ENABLED` (false) / `FEC_BLOCK_SIZE` (4) / `FEC_PARITY` (4) —
@@ -372,6 +463,11 @@ the path usable as resolvers come and go.
   `FEC_AUTO_MAX_PARITY` (0=auto) — loss-triggered FEC.
 
 **Client (`client_config.toml`):**
+- `RESOLVER_TRANSPORT` (auto) — `auto` (UDP, fall back to TCP/53 if UDP finds no
+  resolvers) | `udp` | `tcp`.
+- `RESOLVER_RATE_LIMIT_ENABLED` (true) — per-resolver adaptive pacing.
+- `QNAME_LABEL_LENGTH` (63) — QNAME label reshaping (smaller = shorter, jittered
+  labels; lower fingerprint, less capacity).
 - `QUERY_TYPES` — DNS record types to rotate (TXT/CNAME/A/NULL/HTTPS/SVCB/…).
 - `MTU_PROBE_SAMPLES` (1) / `MTU_MAX_LOSS` (0.0) — loss-aware probing.
 - `MTU_ADAPTIVE_GROUPING` (true) / `MTU_GROUP_GAP_RATIO` (0.25) — adaptive MTU.
