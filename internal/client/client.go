@@ -22,6 +22,7 @@ import (
 	"cottenpickdns-go/internal/arq"
 	"cottenpickdns-go/internal/config"
 	dnsCache "cottenpickdns-go/internal/dnscache"
+	DnsParser "cottenpickdns-go/internal/dnsparser"
 	Enums "cottenpickdns-go/internal/enums"
 	fragmentStore "cottenpickdns-go/internal/fragmentstore"
 	"cottenpickdns-go/internal/logger"
@@ -352,6 +353,11 @@ func buildResolverCacheMTULookup(entries []ResolverCacheEntry) map[string]Resolv
 }
 
 func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Client {
+	// Apply the configured QNAME label shaping process-wide before any tunnel
+	// query is built (server-transparent; affects only how the payload is split
+	// into labels and the matching capacity math).
+	DnsParser.SetQNameLabelLength(cfg.QNameLabelLength)
+
 	var responseMode uint8
 	if cfg.BaseEncodeData {
 		responseMode = mtuProbeBase64Reply

@@ -199,6 +199,15 @@ func TestTunnelEndToEndTCPWithNonTXTChannels(t *testing.T) {
 	runTunnelEcho(t, 1, 1, "", `["TXT", "CNAME", "NULL", "HTTPS"]`, "RESOLVER_TRANSPORT = \"tcp\"\n")
 }
 
+func TestTunnelEndToEndReshapedQNameTCPNonTXT(t *testing.T) {
+	// Strongest integration: reshaped QNAME (short, jittered labels) + DNS-over-
+	// TCP/53 + the non-TXT CNAME/NULL/HTTPS response channels, all at once. Proves
+	// the query-name reshaping composes with the TCP fallback and every response
+	// channel, with a byte-exact 64 KB echo.
+	runTunnelEcho(t, 1, 1, "", `["TXT", "CNAME", "NULL", "HTTPS"]`,
+		"RESOLVER_TRANSPORT = \"tcp\"\nQNAME_LABEL_LENGTH = 24\n")
+}
+
 func runTunnelEcho(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra string) {
 	if clientQueryTypes == "" {
 		clientQueryTypes = `["TXT", "CNAME", "A", "AAAA"]`

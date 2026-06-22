@@ -81,7 +81,11 @@ func BuildTunnelTXTQuestionPacketPrepared(normalizedDomain string, domainQname [
 		return nil, ErrInvalidName
 	}
 
-	labelCount := (len(encodedFrame) + maxDNSLabelLen - 1) / maxDNSLabelLen
+	requestID := nextDNSRequestID()
+	// Shape the encoded payload into labels (lengths jittered per query). Label
+	// count comes from qnameLabelCount so it always matches encodedQNameLen.
+	labelLengths := shapeQNameLabelLengths(len(encodedFrame), uint64(requestID))
+	labelCount := len(labelLengths)
 	qnameLen := len(encodedFrame) + labelCount + len(domainQname)
 
 	arCount := uint16(0)
@@ -92,20 +96,18 @@ func BuildTunnelTXTQuestionPacketPrepared(normalizedDomain string, domainQname [
 	}
 
 	packet := make([]byte, dnsHeaderSize+qnameLen+4+optLen)
-	binary.BigEndian.PutUint16(packet[0:2], nextDNSRequestID())
+	binary.BigEndian.PutUint16(packet[0:2], requestID)
 	binary.BigEndian.PutUint16(packet[2:4], 0x0100)
 	binary.BigEndian.PutUint16(packet[4:6], 1)
 	binary.BigEndian.PutUint16(packet[10:12], arCount)
 
 	offset := dnsHeaderSize
-	for start := 0; start < len(encodedFrame); start += maxDNSLabelLen {
-		end := start + maxDNSLabelLen
-		if end > len(encodedFrame) {
-			end = len(encodedFrame)
-		}
-		packet[offset] = byte(end - start)
+	pos := 0
+	for _, ll := range labelLengths {
+		packet[offset] = byte(ll)
 		offset++
-		offset += copy(packet[offset:], encodedFrame[start:end])
+		offset += copy(packet[offset:], encodedFrame[pos:pos+ll])
+		pos += ll
 	}
 	offset += copy(packet[offset:], domainQname)
 	binary.BigEndian.PutUint16(packet[offset:offset+2], qType)
@@ -197,17 +199,18 @@ func CalculateMaxEncodedQNameChars(domain string) int {
 }
 
 func EncodeDataToLabels(data string) string {
-	if len(data) <= maxDNSLabelLen {
+	labelLen := qnameLabelLen()
+	if len(data) <= labelLen {
 		return data
 	}
 
 	var b strings.Builder
-	b.Grow(len(data) + len(data)/maxDNSLabelLen)
-	for start := 0; start < len(data); start += maxDNSLabelLen {
+	b.Grow(len(data) + len(data)/labelLen)
+	for start := 0; start < len(data); start += labelLen {
 		if start > 0 {
 			b.WriteByte('.')
 		}
-		end := start + maxDNSLabelLen
+		end := start + labelLen
 		if end > len(data) {
 			end = len(data)
 		}
@@ -236,8 +239,10 @@ func encodedQNameLen(encodedChars int, domainLen int) int {
 	if encodedChars <= 0 {
 		return domainLen
 	}
-	labelSplits := (encodedChars - 1) / maxDNSLabelLen
-	return encodedChars + labelSplits + 1 + domainLen
+	// encodedChars data bytes + one length byte per label + the trailing dot
+	// before the base domain + the domain itself. qnameLabelCount is the shared
+	// source of truth with the wire builder, so this stays exact under reshaping.
+	return encodedChars + qnameLabelCount(encodedChars) + domainLen
 }
 
 var dnsIDCounter atomic.Uint32

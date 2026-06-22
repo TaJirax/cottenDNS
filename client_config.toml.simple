@@ -167,6 +167,15 @@ RESOLVER_TRANSPORT = "auto"
 # avoids triggering resolver/IP rate-limit blocks. Default on.
 RESOLVER_RATE_LIMIT_ENABLED = true
 
+# QNAME reshaping: target maximum DNS label length (1..63) when laying the tunnel
+# payload into the query name. 63 (default) packs the payload into the fewest,
+# longest labels for maximum capacity. A smaller value (e.g. 32) produces
+# shorter, more numerous, jittered labels that look less like the classic
+# single-long-label DNS tunnel, at the cost of some payload capacity per query.
+# Server-transparent: the server reassembles the labels regardless of how they
+# are split, so this needs no server change and cannot desync.
+QNAME_LABEL_LENGTH = 63
+
 # ---- Packet duplication -------------------------------------------------------
 # All tunnel packets are sent by the client as DNS queries, so every
 # duplicated packet consumes upload bandwidth. The "direction" below refers

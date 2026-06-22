@@ -45,6 +45,13 @@ type ClientConfig struct {
 	LocalDNSCachePersist                  bool              `toml:"LOCAL_DNS_CACHE_PERSIST_TO_FILE"`
 	LocalDNSCacheFlushSec                 float64           `toml:"LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS"`
 	ResolverBalancingStrategy             int               `toml:"RESOLVER_BALANCING_STRATEGY"`
+	// QNameLabelLength is the target maximum DNS label length when laying the
+	// tunnel payload into the query name (1..63). The default 63 packs the payload
+	// into the fewest, longest labels (max capacity); a smaller value produces
+	// shorter, more numerous labels that look less like a classic DNS tunnel, at
+	// the cost of some payload capacity per query. Server-transparent (the server
+	// reassembles the labels regardless of how they are split).
+	QNameLabelLength                      int               `toml:"QNAME_LABEL_LENGTH"`
 	// ResolverRateLimitEnabled turns on per-resolver adaptive pacing: a resolver
 	// that signals overload (RCODE != 0 or repeated timeouts) is briefly cooled
 	// down and deprioritized so its load shifts to resolvers with headroom. It is
@@ -220,6 +227,7 @@ func defaultClientConfig() ClientConfig {
 		LocalDNSCachePersist:                  true,
 		LocalDNSCacheFlushSec:                 60.0,
 		ResolverBalancingStrategy:             3,
+		QNameLabelLength:                      63,
 		ResolverRateLimitEnabled:              true,
 		ResolverTransport:                     "auto",
 		UploadPacketDuplicationCount:          3,
@@ -472,6 +480,10 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 
 	if cfg.ResolverBalancingStrategy < 0 || cfg.ResolverBalancingStrategy > 5 {
 		return cfg, fmt.Errorf("invalid RESOLVER_BALANCING_STRATEGY: %d", cfg.ResolverBalancingStrategy)
+	}
+
+	if cfg.QNameLabelLength <= 0 || cfg.QNameLabelLength > 63 {
+		cfg.QNameLabelLength = 63
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.ResolverTransport)) {
