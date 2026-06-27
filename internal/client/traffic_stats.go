@@ -80,12 +80,16 @@ func (c *Client) runTrafficStatsReporter(ctx context.Context) {
 			lastTime = now
 
 			if c.log != nil {
+				lossPM := c.tunnelLossPerMille()
+				activeResolvers := c.balancer.ValidCount()
 				c.log.Infof(
-					"\U0001F4CA <cyan>↑</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>↓</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray>",
+					"\U0001F4CA <cyan>↑</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>↓</cyan> <yellow>%s</yellow> <gray>(Total: %s)</gray> <magenta>|</magenta> <cyan>loss</cyan> <yellow>%.1f%%</yellow> <magenta>|</magenta> <cyan>resolvers</cyan> <yellow>%d</yellow>",
 					formatSpeed(upSpeed),
 					formatBytes(currentTX),
 					formatSpeed(downSpeed),
 					formatBytes(currentRX),
+					float64(lossPM)/10.0,
+					activeResolvers,
 				)
 			}
 		}

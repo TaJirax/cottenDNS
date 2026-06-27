@@ -116,6 +116,8 @@ type Client struct {
 	// Traffic byte counters (per-session, reset on resetRuntimeBindings)
 	txTotalBytes atomic.Uint64
 	rxTotalBytes atomic.Uint64
+	// uploadLoss estimates real tunnel loss from the upload retransmit rate.
+	uploadLoss tunnelLossMeter
 
 	// Async Runtime Workers & Channels
 	asyncWG              sync.WaitGroup

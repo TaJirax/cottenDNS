@@ -286,6 +286,10 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 		}
 	}
 
+	// Feed the real-loss meter: a STREAM_DATA is a fresh send, a STREAM_RESEND is
+	// a retransmit (i.e. the original was lost).
+	s.client.recordUploadSample(packetType)
+
 	select {
 	case s.client.txSignal <- struct{}{}:
 	default:

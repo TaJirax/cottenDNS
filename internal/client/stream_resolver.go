@@ -88,7 +88,13 @@ func (c *Client) adaptiveDuplicationCount(base int) int {
 	if c == nil || c.balancer == nil {
 		return base
 	}
+	// Use the larger of the DNS-reachability loss and the real tunnel loss
+	// (upload retransmit rate); the latter actually reflects data loss, which the
+	// DNS sent/acked ratio (≈0 on reachable resolvers) does not.
 	lossPM := c.balancer.AggregateLossPerMille()
+	if tunnelPM := c.tunnelLossPerMille(); tunnelPM > lossPM {
+		lossPM = tunnelPM
+	}
 	if lossPM == 0 {
 		return base
 	}
