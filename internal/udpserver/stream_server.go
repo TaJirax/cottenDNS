@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/fec"
-	"cottenpickdns-go/internal/mlq"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/arq"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/fec"
+	"cottendns-go/internal/mlq"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 // Stream_server encapsulates an ARQ instance and its transmit queue for a single stream.

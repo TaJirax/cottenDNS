@@ -1,6 +1,6 @@
-# CottenpickDNS — Engineering Changes & Design Notes
+# CottenDNS — Engineering Changes & Design Notes
 
-A technical walkthrough of the changes made to CottenpickDNS, written for network
+A technical walkthrough of the changes made to CottenDNS, written for network
 engineers who want to evaluate the design. It explains **what problem each change
 solves**, **how it works**, **how it is wired into the data path**, and **why it
 helps** on hostile DNS networks. Honest caveats are called out where they exist.
@@ -9,15 +9,15 @@ helps** on hostile DNS networks. Honest caveats are called out where they exist.
 
 ## 0. System model (read this first)
 
-CottenpickDNS tunnels TCP over DNS. The client exposes a local SOCKS5/TCP
+CottenDNS tunnels TCP over DNS. The client exposes a local SOCKS5/TCP
 listener, chops each stream into DNS-safe packets, and sends them as the QNAME
 labels of DNS **queries** through one or more recursive resolvers to an
-authoritative CottenpickDNS server. The server reassembles the stream, makes the
+authoritative CottenDNS server. The server reassembles the stream, makes the
 real outbound connection, and returns downstream data inside DNS **answers**
 (TXT/CNAME/A/NULL/HTTPS records).
 
 ```
-app ──TCP──> client ──DNS query (UDP/53)──> resolver(s) ──> CottenpickDNS server ──> internet
+app ──TCP──> client ──DNS query (UDP/53)──> resolver(s) ──> CottenDNS server ──> internet
 app <──TCP── client <──DNS answer──────────── resolver(s) <───────────────────────┘
 ```
 

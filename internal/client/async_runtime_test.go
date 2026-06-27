@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/config"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/logger"
-	"cottenpickdns-go/internal/security"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/config"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
+	"cottendns-go/internal/security"
 )
 
 func createTestClient(t *testing.T) *Client {

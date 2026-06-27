@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -20,8 +20,8 @@ import (
 
 	"golang.org/x/crypto/chacha20"
 
-	baseCodec "cottenpickdns-go/internal/basecodec"
-	"cottenpickdns-go/internal/config"
+	baseCodec "cottendns-go/internal/basecodec"
+	"cottendns-go/internal/config"
 )
 
 var (

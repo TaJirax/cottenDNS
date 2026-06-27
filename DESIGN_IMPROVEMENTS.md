@@ -1,4 +1,4 @@
-# CottenpickDNS — Improvement Design & Roadmap Menu
+# CottenDNS — Improvement Design & Roadmap Menu
 
 > Status: **proposal / menu**. Nothing here is implemented yet. The goal is to lay out
 > every worthwhile improvement with enough detail to pick a roadmap. Each item lists

@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -9,8 +9,8 @@ package client
 import (
 	"testing"
 
-	"cottenpickdns-go/internal/config"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/config"
+	Enums "cottendns-go/internal/enums"
 )
 
 // buildTestClientWithConnections builds a client whose connections are explicit

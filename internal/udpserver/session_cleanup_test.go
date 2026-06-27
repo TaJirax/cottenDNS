@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/config"
-	Enums "cottenpickdns-go/internal/enums"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
-	"cottenpickdns-go/internal/mlq"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/config"
+	Enums "cottendns-go/internal/enums"
+	fragmentStore "cottendns-go/internal/fragmentstore"
+	"cottendns-go/internal/mlq"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 type testReadWriteCloser struct {

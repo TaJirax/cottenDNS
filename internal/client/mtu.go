@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/logger"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 var ErrNoValidConnections = errors.New("no valid connections after mtu testing")

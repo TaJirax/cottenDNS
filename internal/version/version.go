@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -9,7 +9,7 @@ package version
 
 import "strings"
 
-// BuildVersion is set at link-time using -ldflags "-X cottenpickdns-go/internal/version.BuildVersion=..."
+// BuildVersion is set at link-time using -ldflags "-X cottendns-go/internal/version.BuildVersion=..."
 var BuildVersion = "dev"
 
 // GetVersion returns the current build version.

@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"testing"
 
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/fec"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/fec"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 func TestStreamServerAutoFECEnablesOnLoss(t *testing.T) {

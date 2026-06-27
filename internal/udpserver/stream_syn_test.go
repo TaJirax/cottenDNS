@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/config"
-	Enums "cottenpickdns-go/internal/enums"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/config"
+	Enums "cottendns-go/internal/enums"
+	fragmentStore "cottendns-go/internal/fragmentstore"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 // testNetConn is a minimal net.Conn fake. closed is atomic so tests that race

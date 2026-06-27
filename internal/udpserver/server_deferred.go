@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	Enums "cottenpickdns-go/internal/enums"
-	SocksProto "cottenpickdns-go/internal/socksproto"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	Enums "cottendns-go/internal/enums"
+	SocksProto "cottendns-go/internal/socksproto"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 const maxDeferredConnectAttemptTimeout = 15 * time.Second

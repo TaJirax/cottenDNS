@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,8 +10,8 @@ package vpnproto
 import (
 	"errors"
 
-	"cottenpickdns-go/internal/compression"
-	"cottenpickdns-go/internal/security"
+	"cottendns-go/internal/compression"
+	"cottendns-go/internal/security"
 )
 
 var ErrInvalidCompressedPayload = errors.New("invalid compressed vpn payload")

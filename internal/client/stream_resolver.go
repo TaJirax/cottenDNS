@@ -4,8 +4,8 @@ import (
 	"math"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/arq"
+	Enums "cottendns-go/internal/enums"
 )
 
 // adaptiveDuplicationCeiling caps the duplication count chosen by tier-1

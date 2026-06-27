@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"cottenpickdns-go/internal/logger"
+	"cottendns-go/internal/logger"
 )
 
 type resolverHealthEvent struct {

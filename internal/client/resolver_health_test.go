@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/config"
+	"cottendns-go/internal/config"
 )
 
 func waitForResolverHealthCondition(t *testing.T, timeout time.Duration, cond func() bool, message string) {

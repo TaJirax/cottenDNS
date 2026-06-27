@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -16,10 +16,10 @@ import (
 	"net"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/client/handlers"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/client/handlers"
+	DnsParser "cottendns-go/internal/dnsparser"
+	fragmentStore "cottendns-go/internal/fragmentstore"
 )
 
 const clientRXDropLogInterval = 2 * time.Second

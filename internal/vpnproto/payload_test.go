@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,8 +11,8 @@ import (
 	"bytes"
 	"testing"
 
-	"cottenpickdns-go/internal/compression"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/compression"
+	Enums "cottendns-go/internal/enums"
 )
 
 func TestPreparePayloadCompressesSupportedPacket(t *testing.T) {

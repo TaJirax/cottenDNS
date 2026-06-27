@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -20,10 +20,10 @@ import (
 	"encoding/binary"
 	"strings"
 
-	baseCodec "cottenpickdns-go/internal/basecodec"
-	"cottenpickdns-go/internal/compression"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	baseCodec "cottendns-go/internal/basecodec"
+	"cottendns-go/internal/compression"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 // firstQuestionQType returns the qType of the first question in a raw DNS

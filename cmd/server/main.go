@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,12 +17,12 @@ import (
 	"strings"
 	"syscall"
 
-	"cottenpickdns-go/internal/config"
-	"cottenpickdns-go/internal/logger"
-	"cottenpickdns-go/internal/runtimepath"
-	"cottenpickdns-go/internal/security"
-	UDPServer "cottenpickdns-go/internal/udpserver"
-	"cottenpickdns-go/internal/version"
+	"cottendns-go/internal/config"
+	"cottendns-go/internal/logger"
+	"cottendns-go/internal/runtimepath"
+	"cottendns-go/internal/security"
+	UDPServer "cottendns-go/internal/udpserver"
+	"cottendns-go/internal/version"
 )
 
 func waitForExitInput() {

@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/config"
+	"cottendns-go/internal/config"
 )
 
 func TestClusterConnectionsByMTU_GapBanding(t *testing.T) {

@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,7 +14,7 @@ import (
 
 func TestCodecRoundTrip(t *testing.T) {
 	methods := []int{0, 1, 2, 3, 4, 5}
-	plaintext := []byte("cottenpickdns-roundtrip-test")
+	plaintext := []byte("cottendns-roundtrip-test")
 	rawKey := "0123456789abcdef0123456789abcdef"
 
 	for _, method := range methods {
