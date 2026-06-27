@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"cottenpickdns-go/internal/config"
+	"cottendns-go/internal/config"
 )
 
 func TestNextSessionInitAttemptUsesBalancerSnapshotConnection(t *testing.T) {

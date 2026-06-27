@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"cottenpickdns-go/internal/netutil"
+	"cottendns-go/internal/netutil"
 )
 
 type TCPListener struct {

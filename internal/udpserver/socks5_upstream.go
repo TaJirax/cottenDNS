@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/logger"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
 )
 
 type upstreamSOCKS5Error struct {

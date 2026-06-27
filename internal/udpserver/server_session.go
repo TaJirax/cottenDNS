@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/compression"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	domainMatcher "cottenpickdns-go/internal/domainmatcher"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/compression"
+	DnsParser "cottendns-go/internal/dnsparser"
+	domainMatcher "cottendns-go/internal/domainmatcher"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 // tunnelBaseDomain returns the configured tunnel domain that is the suffix of

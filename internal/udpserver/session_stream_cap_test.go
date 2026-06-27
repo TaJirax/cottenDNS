@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,7 +10,7 @@ package udpserver
 import (
 	"testing"
 
-	"cottenpickdns-go/internal/arq"
+	"cottendns-go/internal/arq"
 )
 
 func TestGetOrCreateStreamEnforcesMaxStreamsPerSession(t *testing.T) {

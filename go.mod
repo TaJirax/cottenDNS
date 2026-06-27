@@ -1,11 +1,11 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
-// Github: https://github.com/TaJirax/cottenpickDNS
+// Github: https://github.com/TaJirax/CottenDNS
 // Year: 2026
 // ==============================================================================
 
-module cottenpickdns-go
+module cottendns-go
 
 go 1.25.0
 

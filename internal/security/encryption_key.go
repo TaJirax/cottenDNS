@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,7 +14,7 @@ import (
 	"os"
 	"strings"
 
-	"cottenpickdns-go/internal/config"
+	"cottendns-go/internal/config"
 )
 
 type EncryptionKeyInfo struct {

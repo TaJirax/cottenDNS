@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,9 +10,9 @@
 package client
 
 import (
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 type preparedTunnelDomain struct {

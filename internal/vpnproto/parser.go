@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,8 +10,8 @@ package vpnproto
 import (
 	"errors"
 
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/security"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/security"
 )
 
 var (

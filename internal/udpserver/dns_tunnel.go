@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"cottenpickdns-go/internal/dnscache"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/inflight"
+	"cottendns-go/internal/dnscache"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/inflight"
 )
 
 var ErrInvalidDNSUpstream = errors.New("invalid dns upstream")

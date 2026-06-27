@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -7,7 +7,7 @@
 
 package dnsparser
 
-import Enums "cottenpickdns-go/internal/enums"
+import Enums "cottendns-go/internal/enums"
 
 func IsSupportedTunnelDNSQuery(qType uint16, qClass uint16) bool {
 	if qClass != Enums.DNSQ_CLASS_IN {

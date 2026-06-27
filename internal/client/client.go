@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -19,16 +19,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/config"
-	dnsCache "cottenpickdns-go/internal/dnscache"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
-	"cottenpickdns-go/internal/logger"
-	"cottenpickdns-go/internal/mlq"
-	"cottenpickdns-go/internal/security"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/config"
+	dnsCache "cottendns-go/internal/dnscache"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	fragmentStore "cottendns-go/internal/fragmentstore"
+	"cottendns-go/internal/logger"
+	"cottendns-go/internal/mlq"
+	"cottendns-go/internal/security"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 const (

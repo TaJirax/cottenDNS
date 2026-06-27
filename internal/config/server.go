@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -20,7 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"cottenpickdns-go/internal/compression"
+	"cottendns-go/internal/compression"
 )
 
 type ServerConfig struct {

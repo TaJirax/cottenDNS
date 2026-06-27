@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"cottenpickdns-go/internal/logger"
+	"cottendns-go/internal/logger"
 )
 
 func (s *Server) configureSocketBuffers(conn *net.UDPConn) {

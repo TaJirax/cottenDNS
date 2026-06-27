@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,9 +11,9 @@ import (
 	"bytes"
 	"testing"
 
-	"cottenpickdns-go/internal/compression"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/security"
+	"cottendns-go/internal/compression"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/security"
 )
 
 // A 32-char shared key works for every method: deriveKey hashes/pads it per

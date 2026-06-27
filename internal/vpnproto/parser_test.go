@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,8 +11,8 @@ import (
 	"bytes"
 	"testing"
 
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/security"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/security"
 )
 
 func buildRawPacket(

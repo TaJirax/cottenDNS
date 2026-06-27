@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/config"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/config"
+	Enums "cottendns-go/internal/enums"
 )
 
 func buildTestClientWithResolvers(cfg config.ClientConfig, keys ...string) *Client {

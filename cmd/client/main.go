@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"cottenpickdns-go/internal/client"
-	"cottenpickdns-go/internal/config"
-	"cottenpickdns-go/internal/runtimepath"
-	"cottenpickdns-go/internal/version"
+	"cottendns-go/internal/client"
+	"cottendns-go/internal/config"
+	"cottendns-go/internal/runtimepath"
+	"cottendns-go/internal/version"
 )
 
 func waitForExitInput() {

@@ -19,15 +19,15 @@
         "FileSubtype": "00"
     },
     "StringFileInfo": {
-        "Comments": "CottenpickDNS Server",
+        "Comments": "CottenDNS Server",
         "CompanyName": "tajirax",
-        "FileDescription": "CottenpickDNS Server",
+        "FileDescription": "CottenDNS Server",
         "FileVersion": "1.0.0.0",
-        "InternalName": "CottenpickDNS_Server",
+        "InternalName": "CottenDNS_Server",
         "LegalCopyright": "Copyright (c) 2026 tajirax",
         "LegalTrademarks": "",
-        "OriginalFilename": "CottenpickDNS_Server.exe",
-        "ProductName": "CottenpickDNS",
+        "OriginalFilename": "CottenDNS_Server.exe",
+        "ProductName": "CottenDNS",
         "ProductVersion": "1.0.0.0"
     },
     "VarFileInfo": {
@@ -36,5 +36,5 @@
             "CharsetID": "04B0"
         }
     },
-    "IconPath": "../../assets/cottenpickdns.ico"
+    "IconPath": "../../assets/cottendns.ico"
 }

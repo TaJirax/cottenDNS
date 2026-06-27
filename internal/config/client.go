@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -20,8 +20,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"cottenpickdns-go/internal/compression"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/compression"
+	Enums "cottendns-go/internal/enums"
 )
 
 type ClientConfig struct {
@@ -294,7 +294,7 @@ func defaultClientConfig() ClientConfig {
 		LogLevel:                              "INFO",
 		LogToFile:                             true,
 		LogDir:                                "logs",
-		LogFileName:                           "cottenpickdns_{time}.log",
+		LogFileName:                           "cottendns_{time}.log",
 		StatsReportIntervalSeconds:            5.0,
 		StartupMode:                           "logs",
 		LogScanMaxDays:                        30,
@@ -602,7 +602,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	}
 	cfg.LogFileName = strings.TrimSpace(cfg.LogFileName)
 	if cfg.LogFileName == "" {
-		cfg.LogFileName = "cottenpickdns_{time}.log"
+		cfg.LogFileName = "cottendns_{time}.log"
 	}
 	cfg.StartupMode = strings.ToLower(strings.TrimSpace(cfg.StartupMode))
 	switch cfg.StartupMode {
@@ -842,7 +842,7 @@ func (c ClientConfig) ResolvedLogFilePath() string {
 	}
 	name := c.LogFileName
 	if name == "" {
-		name = "cottenpickdns_{time}.log"
+		name = "cottendns_{time}.log"
 	}
 	if strings.Contains(name, "{time}") {
 		ts := time.Now().Format("20060102_150405")

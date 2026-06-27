@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"cottenpickdns-go/internal/compression"
+	"cottendns-go/internal/compression"
 )
 
 func TestLoadClientConfigNormalizesAndLoadsResolvers(t *testing.T) {

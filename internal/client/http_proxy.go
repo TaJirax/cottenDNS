@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -16,8 +16,8 @@ import (
 	"net/http"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	Enums "cottenpickdns-go/internal/enums"
+	"cottendns-go/internal/arq"
+	Enums "cottendns-go/internal/enums"
 )
 
 // LocalSocksVersion sentinel values for HTTP proxy modes (above any real SOCKS version byte).

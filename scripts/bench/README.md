@@ -1,6 +1,6 @@
-# CottenpickDNS Benchmark Suite
+# CottenDNS Benchmark Suite
 
-This directory contains the core benchmarking tools for CottenpickDNS, now enhanced with high-precision timing and standalone tool capabilities inspired by the `slipstream-rust` methodology.
+This directory contains the core benchmarking tools for CottenDNS, now enhanced with high-precision timing and standalone tool capabilities inspired by the `slipstream-rust` methodology.
 
 ## Tools
 
@@ -13,7 +13,7 @@ Unlike simple timers, `bench.go` starts its measurement only when the **first by
 
 #### Usage (Full Orchestration)
 
-To run a standard end-to-end benchmark through the CottenpickDNS tunnel:
+To run a standard end-to-end benchmark through the CottenDNS tunnel:
 
 ```bash
 go run scripts/bench/bench.go -runs 3 -bytes 10485760

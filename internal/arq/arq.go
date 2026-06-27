@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	Enums "cottenpickdns-go/internal/enums"
+	Enums "cottendns-go/internal/enums"
 )
 
 // StreamState mirrors Python's Stream_State enum

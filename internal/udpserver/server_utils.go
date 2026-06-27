@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,10 +11,10 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"cottenpickdns-go/internal/compression"
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/logger"
+	"cottendns-go/internal/compression"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
 )
 
 func (s *Server) debugLoggingEnabled() bool {

@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -12,9 +12,9 @@
 package dnsparser
 
 import (
-	baseCodec "cottenpickdns-go/internal/basecodec"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	baseCodec "cottendns-go/internal/basecodec"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 func buildTXTAnswerChunks(rawFrame []byte, baseEncode bool) ([][]byte, error) {

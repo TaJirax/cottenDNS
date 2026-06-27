@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,7 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	Enums "cottenpickdns-go/internal/enums"
+	Enums "cottendns-go/internal/enums"
 )
 
 func BuildTXTQuestionPacket(name string, qType uint16, ednsUDPSize uint16) ([]byte, error) {

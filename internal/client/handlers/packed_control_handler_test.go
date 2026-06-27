@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -9,9 +9,9 @@ package handlers
 import (
 	"testing"
 
-	Enums "cottenpickdns-go/internal/enums"
-	"cottenpickdns-go/internal/logger"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 type packedTestClientContext struct {

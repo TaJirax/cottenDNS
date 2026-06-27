@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -15,12 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cottenpickdns-go/internal/config"
-	dnsCache "cottenpickdns-go/internal/dnscache"
-	domainMatcher "cottenpickdns-go/internal/domainmatcher"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
-	"cottenpickdns-go/internal/logger"
-	"cottenpickdns-go/internal/security"
+	"cottendns-go/internal/config"
+	dnsCache "cottendns-go/internal/dnscache"
+	domainMatcher "cottendns-go/internal/domainmatcher"
+	fragmentStore "cottendns-go/internal/fragmentstore"
+	"cottendns-go/internal/logger"
+	"cottendns-go/internal/security"
 )
 
 const (

@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"strings"
 
-	baseCodec "cottenpickdns-go/internal/basecodec"
-	"cottenpickdns-go/internal/compression"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	baseCodec "cottendns-go/internal/basecodec"
+	"cottendns-go/internal/compression"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 func BuildTXTResponsePacket(questionPacket []byte, answerName string, answerPayloads [][]byte) ([]byte, error) {

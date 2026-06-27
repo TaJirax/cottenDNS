@@ -3,7 +3,7 @@ package vpnproto
 import (
 	"testing"
 
-	Enums "cottenpickdns-go/internal/enums"
+	Enums "cottendns-go/internal/enums"
 )
 
 func TestIsPackableControlPacketIncludesSmallSocksResults(t *testing.T) {

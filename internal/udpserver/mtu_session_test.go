@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	domainMatcher "cottenpickdns-go/internal/domainmatcher"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	DnsParser "cottendns-go/internal/dnsparser"
+	domainMatcher "cottendns-go/internal/domainmatcher"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 func TestHandleMTUDownRequestBuildsZeroFilledPayload(t *testing.T) {

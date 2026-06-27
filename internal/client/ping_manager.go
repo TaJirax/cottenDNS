@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	Enums "cottenpickdns-go/internal/enums"
+	Enums "cottendns-go/internal/enums"
 )
 
 type PingManager struct {

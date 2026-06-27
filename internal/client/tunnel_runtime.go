@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -17,8 +17,8 @@ import (
 	"net"
 	"time"
 
-	"cottenpickdns-go/internal/dnsparser"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/dnsparser"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 const (

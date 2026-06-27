@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cottenpickdns-go/internal/logger"
+	"cottendns-go/internal/logger"
 )
 
 type deferredSessionLane struct {

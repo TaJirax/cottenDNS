@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/config"
-	fragmentStore "cottenpickdns-go/internal/fragmentstore"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/config"
+	fragmentStore "cottendns-go/internal/fragmentstore"
 )
 
 // TestStatsZeroValueAndNilSafe exercises the documented contracts of Stats():

@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"cottenpickdns-go/internal/arq"
-	"cottenpickdns-go/internal/config"
-	Enums "cottenpickdns-go/internal/enums"
-	VpnProto "cottenpickdns-go/internal/vpnproto"
+	"cottendns-go/internal/arq"
+	"cottendns-go/internal/config"
+	Enums "cottendns-go/internal/enums"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 func buildTCPTestClient() *Client {

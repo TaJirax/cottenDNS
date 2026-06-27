@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -10,8 +10,8 @@ package domainmatcher
 import (
 	"testing"
 
-	DnsParser "cottenpickdns-go/internal/dnsparser"
-	Enums "cottenpickdns-go/internal/enums"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
 )
 
 func TestMatcherReturnsNoDataForUnauthorizedDomain(t *testing.T) {

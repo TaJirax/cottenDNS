@@ -1,5 +1,5 @@
 // ==============================================================================
-// CottenpickDNS
+// CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
 // Year: 2026
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	Enums "cottenpickdns-go/internal/enums"
+	Enums "cottendns-go/internal/enums"
 )
 
 func TestNextQueryTypeDefaultsToTXT(t *testing.T) {

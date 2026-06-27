@@ -1,4 +1,4 @@
-# CottenpickDNS — Agent Guide
+# CottenDNS — Agent Guide
 
 ## Target Network
 
