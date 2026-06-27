@@ -415,8 +415,9 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	case "", "SOCKS5":
 		cfg.ProtocolType = "SOCKS5"
 	case "TCP":
+	case "HTTP":
 	default:
-		return cfg, fmt.Errorf("invalid PROTOCOL_TYPE: %q", cfg.ProtocolType)
+		return cfg, fmt.Errorf("invalid PROTOCOL_TYPE: %q (valid: SOCKS5, HTTP, TCP)", cfg.ProtocolType)
 	}
 
 	if cfg.DataEncryptionMethod < 0 || cfg.DataEncryptionMethod > 5 {

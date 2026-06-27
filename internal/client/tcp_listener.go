@@ -169,10 +169,12 @@ func listenerShouldRetryAccept(err error) bool {
 
 // handleConnection manages the local proxy/TCP forwarding handshake and requests.
 func (l *TCPListener) handleConnection(ctx context.Context, conn net.Conn, protocolType string) {
-	if protocolType == "SOCKS5" {
+	switch protocolType {
+	case "SOCKS5":
 		l.client.HandleSOCKS5(ctx, conn)
-		return
+	case "HTTP":
+		l.client.HandleHTTPProxy(ctx, conn)
+	default:
+		l.client.HandleTCPConnect(ctx, conn)
 	}
-
-	l.client.HandleTCPConnect(ctx, conn)
 }

@@ -442,9 +442,19 @@ func (c *Client) writeSocksConnectResultLocked(s *Stream_client, rep byte) error
 	}
 
 	var err error
-	if s.LocalSocksVersion == SOCKS4_VERSION {
+	switch s.LocalSocksVersion {
+	case httpProxyCONNECT:
+		if rep == SOCKS5_REPLY_SUCCESS {
+			_, err = s.NetConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+		} else {
+			sendHTTPError(s.NetConn, 502)
+		}
+	case httpProxyPlain:
+		// No handshake reply for plain HTTP; the rewritten request is already
+		// prepended in the stream conn — just let the ARQ start forwarding.
+	case SOCKS4_VERSION:
 		err = c.sendSocks4Reply(s.NetConn, rep == SOCKS5_REPLY_SUCCESS)
-	} else {
+	default:
 		err = c.sendSocksReply(s.NetConn, rep, SOCKS5_ATYP_IPV4, net.IPv4zero, 0)
 	}
 
