@@ -70,6 +70,7 @@ func promptStartupMode(preConfig config.ClientStartupPreConfig) bool {
 func main() {
 	configPath := flag.String("config", "client_config.toml", "Path to client configuration file")
 	resolversPath := flag.String("resolvers", "", "Path to resolver file override (optional)")
+	scanOnly := flag.Bool("scan-only", false, "Scan resolvers, emit WD_SCAN results, and exit without starting the tunnel")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	configFlags, err := config.NewClientConfigFlagBinder(flag.CommandLine)
 	if err != nil {
@@ -93,7 +94,12 @@ func main() {
 	// Peek at startup-mode fields before loading the full config so we can
 	// present the prompt without side-effects.
 	preConfig := config.PeekClientStartupConfig(resolvedConfigPath)
-	fromLogs := promptStartupMode(preConfig)
+	// Scan-only mode always performs a full resolver scan and never consults the
+	// interactive startup prompt or log-based fast start.
+	fromLogs := false
+	if !*scanOnly {
+		fromLogs = promptStartupMode(preConfig)
+	}
 
 	var app *client.Client
 	if fromLogs {
@@ -130,6 +136,16 @@ func main() {
 	// Wait for termination signal
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *scanOnly {
+		if _, err := app.RunResolverScan(sigCtx); err != nil {
+			if log != nil {
+				log.Errorf("Resolver scan error: %v", err)
+			}
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := app.Run(sigCtx); err != nil {
 		if log != nil {

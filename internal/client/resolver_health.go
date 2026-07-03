@@ -422,6 +422,8 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 			c.activeResolverCount(),
 		)
 	}
+	// A resolver just left the active pool; surface the change.
+	c.logResolverRuntimeState()
 	return true
 }
 
@@ -652,6 +654,9 @@ func (c *Client) handleSuccessfulResolverRecheck(serverKey string, now time.Time
 	if conn, ok := c.GetConnectionByKey(serverKey); ok {
 		c.appendResolverCacheEntry(&conn)
 	}
+
+	// A resolver just re-entered the active pool; surface the change.
+	c.logResolverRuntimeState()
 }
 
 func (c *Client) tryAcquireResolverRecheckSlot() bool {

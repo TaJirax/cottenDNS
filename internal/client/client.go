@@ -70,6 +70,12 @@ type Client struct {
 	nowFn               func() time.Time
 	recheckConnectionFn func(conn *Connection) bool
 
+	// WD_RESOLVERS runtime-state emission dedup (WhiteDNS-Android integration):
+	// suppresses repeated identical machine lines between heartbeats.
+	resolverRuntimeLogMu     sync.Mutex
+	lastResolverRuntimeLog   string
+	lastResolverRuntimeLogAt time.Time
+
 	// MTU States
 	syncedUploadMTU   int
 	syncedDownloadMTU int
@@ -483,6 +489,7 @@ func (c *Client) nextSessionInitRetryDelay(failures int) time.Duration {
 func (c *Client) Run(ctx context.Context) error {
 	c.successMTUChecks = false
 	c.log.Infof("\U0001F504 <cyan>Starting main runtime loop...</cyan>")
+	c.logConnectionProgress("starting", 5)
 	sessionInitRetryDelay := time.Duration(0)
 	sessionInitRetryFailures := 0
 
@@ -521,6 +528,7 @@ func (c *Client) Run(ctx context.Context) error {
 
 				if mtuErr != nil {
 					c.log.Errorf("<red>MTU tests failed: %v</red>", mtuErr)
+					c.logConnectionProgress("retry", 10)
 					c.successMTUChecks = false
 					select {
 					case <-ctx.Done():
@@ -535,6 +543,7 @@ func (c *Client) Run(ctx context.Context) error {
 				if c.syncedUploadMTU <= 0 || c.syncedDownloadMTU <= 0 {
 					c.successMTUChecks = false
 					c.log.Errorf("<red>❌ MTU tests failed: Upload MTU: %d, Download MTU: %d</red>", c.syncedUploadMTU, c.syncedDownloadMTU)
+					c.logConnectionProgress("retry", 10)
 					select {
 					case <-ctx.Done():
 						c.notifySessionCloseBurst(time.Second)
@@ -555,10 +564,12 @@ func (c *Client) Run(ctx context.Context) error {
 					retries = 3
 				}
 
+				c.logConnectionProgress("session", 90, "attempt", sessionInitRetryFailures+1)
 				if err := c.InitializeSession(retries); err != nil {
 					sessionInitRetryFailures++
 					sessionInitRetryDelay = c.nextSessionInitRetryDelay(sessionInitRetryFailures)
 					c.log.Errorf("<red>❌ Session initialization failed: %v</red>", err)
+					c.logConnectionProgress("retry", 90, "attempt", sessionInitRetryFailures)
 					c.log.Warnf("<yellow>Session init retry backoff: %s</yellow>", sessionInitRetryDelay)
 					select {
 					case <-ctx.Done():
@@ -570,6 +581,7 @@ func (c *Client) Run(ctx context.Context) error {
 					continue
 				}
 				c.log.Infof("<green>✅ Session Initialized Successfully (ID: <cyan>%d</cyan>)</green>", c.sessionID)
+				c.logConnectionProgress("runtime", 98)
 
 				sessionInitRetryFailures = 0
 				sessionInitRetryDelay = 0

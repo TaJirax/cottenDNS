@@ -180,6 +180,8 @@ func (c *Client) finalizeMTUSelection(validConns []Connection, minUpload, minDow
 
 	c.applySyncedMTUState(minUpload, minDownload, minUploadChars)
 	c.balancer.RefreshValidConnections()
+	c.logConnectionProgress("selecting", 85, "valid", len(validConns))
+	c.logResolverRuntimeState()
 	c.initResolverRecheckMeta()
 
 	c.logMTUCompletion(validConns)
