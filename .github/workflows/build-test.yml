@@ -342,6 +342,7 @@ jobs:
           cp client_config.*.toml dist/ || true
           cp server_config.*.toml dist/ || true
           cp CONFIG_PRESETS.md dist/ || true
+          cp docs/ENGINEERING_CHANGES.md dist/ENGINEERING_CHANGES.md || true
 
       - name: Prepare smoke-test config
         shell: bash
@@ -500,6 +501,7 @@ jobs:
           docs = [
               ("README.MD", "CottenDNS Documentation", "README.html"),
               ("README_FA.MD", "CottenDNS Documentation (FA)", "README_FA.html"),
+              ("docs/ENGINEERING_CHANGES.md", "CottenDNS Engineering Notes", "ENGINEERING_CHANGES.html"),
           ]
 
           dist = Path("dist")
@@ -565,14 +567,18 @@ jobs:
             Rename-Item -Path $serverOrig -NewName $serverExeName -Force
           }
 
-          Compress-Archive -Path $clientExeName,"client_config.toml","client_resolvers.txt","client_config.*.toml","CONFIG_PRESETS.md" -DestinationPath "${clientZipBase}.zip" -Force
-          Compress-Archive -Path $serverExeName,"server_config.toml","server_config.*.toml","CONFIG_PRESETS.md" -DestinationPath "${serverZipBase}.zip" -Force
+          Compress-Archive -Path $clientExeName,"client_config.toml","client_resolvers.txt","client_config.*.toml","CONFIG_PRESETS.md","ENGINEERING_CHANGES.md" -DestinationPath "${clientZipBase}.zip" -Force
+          Compress-Archive -Path $serverExeName,"server_config.toml","server_config.*.toml","CONFIG_PRESETS.md","ENGINEERING_CHANGES.md" -DestinationPath "${serverZipBase}.zip" -Force
 
           if (Test-Path "README.html") {
             Compress-Archive -Path "README.html" -Update -DestinationPath "${clientZipBase}.zip"
           }
           if (Test-Path "README_FA.html") {
             Compress-Archive -Path "README_FA.html" -Update -DestinationPath "${clientZipBase}.zip"
+          }
+          if (Test-Path "ENGINEERING_CHANGES.html") {
+            Compress-Archive -Path "ENGINEERING_CHANGES.html" -Update -DestinationPath "${clientZipBase}.zip"
+            Compress-Archive -Path "ENGINEERING_CHANGES.html" -Update -DestinationPath "${serverZipBase}.zip"
           }
 
           $hashTargets = @()
@@ -619,12 +625,16 @@ jobs:
           CLIENT_RESOLVERS="client_resolvers.txt"
           CLIENT_README_EN="README.html"
           CLIENT_README_FA="README_FA.html"
+          ENGINEERING_NOTES_MD="ENGINEERING_CHANGES.md"
+          ENGINEERING_NOTES_HTML="ENGINEERING_CHANGES.html"
           SERVER_TOML="server_config.toml"
 
           CLIENT_FILES=( "${CLIENT_EXE_NAME}" "${CLIENT_TOML}" "${CLIENT_RESOLVERS}" )
           CLIENT_PRESETS=( client_config.*.toml )
           [ -e "${CLIENT_PRESETS[0]}" ] && CLIENT_FILES+=( "${CLIENT_PRESETS[@]}" )
           [ -f "CONFIG_PRESETS.md" ] && CLIENT_FILES+=( "CONFIG_PRESETS.md" )
+          [ -f "${ENGINEERING_NOTES_MD}" ] && CLIENT_FILES+=( "${ENGINEERING_NOTES_MD}" )
+          [ -f "${ENGINEERING_NOTES_HTML}" ] && CLIENT_FILES+=( "${ENGINEERING_NOTES_HTML}" )
           [ -f "${CLIENT_README_EN}" ] && CLIENT_FILES+=( "${CLIENT_README_EN}" )
           [ -f "${CLIENT_README_FA}" ] && CLIENT_FILES+=( "${CLIENT_README_FA}" )
 
@@ -632,6 +642,8 @@ jobs:
           SERVER_PRESETS=( server_config.*.toml )
           [ -e "${SERVER_PRESETS[0]}" ] && SERVER_FILES+=( "${SERVER_PRESETS[@]}" )
           [ -f "CONFIG_PRESETS.md" ] && SERVER_FILES+=( "CONFIG_PRESETS.md" )
+          [ -f "${ENGINEERING_NOTES_MD}" ] && SERVER_FILES+=( "${ENGINEERING_NOTES_MD}" )
+          [ -f "${ENGINEERING_NOTES_HTML}" ] && SERVER_FILES+=( "${ENGINEERING_NOTES_HTML}" )
 
           zip -j "${CLIENT_ZIP}" "${CLIENT_FILES[@]}" || true
           tar -czf "${CLIENT_TAR}" "${CLIENT_FILES[@]}" || true

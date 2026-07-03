@@ -665,7 +665,7 @@ CottenDNS_Server_<Platform>_<ARCH>.zip
 CottenDNS_Server_<Platform>_<ARCH>.tar.gz
 ```
 
-The GitHub Actions release matrix includes Windows, Linux, Linux-Legacy, macOS, and Termux/Android targets. Client packages include the executable, `client_config.toml`, paired `client_config.*.toml` presets, `client_resolvers.txt`, and `CONFIG_PRESETS.md`. Linux client packages also include `client_linux_install.sh`. Server packages include the executable, `server_config.toml`, paired `server_config.*.toml` presets, and `CONFIG_PRESETS.md`.
+The GitHub Actions release matrix includes Windows, Linux, Linux-Legacy, macOS, and Termux/Android targets. Client packages include the executable, `client_config.toml`, paired `client_config.*.toml` presets, `client_resolvers.txt`, `CONFIG_PRESETS.md`, and the engineering notes. Linux client packages also include `client_linux_install.sh`. Server packages include the executable, `server_config.toml`, paired `server_config.*.toml` presets, `CONFIG_PRESETS.md`, and the engineering notes.
 
 <a id="development"></a>
 

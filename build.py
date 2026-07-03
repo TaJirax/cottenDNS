@@ -115,6 +115,9 @@ def main():
         shutil.copy("README.MD", dist_dir / "README.MD")
     if Path("README_FA.MD").exists():
         shutil.copy("README_FA.MD", dist_dir / "README_FA.MD")
+    engineering_notes = Path("docs") / "ENGINEERING_CHANGES.md"
+    if engineering_notes.exists():
+        shutil.copy(engineering_notes, dist_dir / "ENGINEERING_CHANGES.md")
         
     if skipped:
         print("Skipped targets:", ", ".join(skipped))
