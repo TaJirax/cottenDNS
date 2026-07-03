@@ -25,7 +25,10 @@ var (
 
 const (
 	integrityLength = 2
-	minHeaderLength = 5
+	// Reserves the historical iota slot (formerly minHeaderLength) so the packet
+	// flag bit values below are unchanged. The minimum header length is now
+	// dynamic (see minHeaderLen) because the session-ID width is configurable.
+	_ = 5
 
 	packetFlagValid = 1 << iota
 	packetFlagStream
@@ -111,18 +114,18 @@ func ParseAtOffset(data []byte, offset int) (Packet, error) {
 
 func parseFrom(data []byte, start int) (Packet, error) {
 	data = data[start:]
-	if len(data) < minHeaderLength {
+	if len(data) < minHeaderLen() {
 		return Packet{}, ErrPacketTooShort
 	}
 
-	packetType := data[2]
+	packetType := data[sessionIDLen]
 	flags := packetFlags[packetType]
 	if flags&packetFlagValid == 0 {
 		return Packet{}, ErrInvalidPacketType
 	}
 
 	// Fast-path length check
-	minLen := 3 + integrityLength
+	minLen := headerBaseLen() + integrityLength
 	if flags&packetFlagStream != 0 {
 		minLen += 2
 	}
@@ -141,11 +144,11 @@ func parseFrom(data []byte, start int) (Packet, error) {
 	}
 
 	packet := Packet{
-		SessionID:  (uint16(data[0]) << 8) | uint16(data[1]),
+		SessionID:  readSessionID(data),
 		PacketType: packetType,
 	}
 
-	offset := 3
+	offset := headerBaseLen()
 	if flags&packetFlagStream != 0 {
 		packet.HasStreamID = true
 		packet.StreamID = (uint16(data[offset]) << 8) | uint16(data[offset+1])

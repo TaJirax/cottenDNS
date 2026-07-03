@@ -83,14 +83,28 @@ func (c *Client) initializeSessionOnce() error {
 		c.setSessionInitBusyUntil(time.Now().Add(c.cfg.SessionInitBusyRetryInterval()))
 		return ErrSessionInitBusy
 	case Enums.PACKET_SESSION_ACCEPT:
-		if len(packet.Payload) < sessionAcceptPayloadSize || !bytes.Equal(packet.Payload[4:8], verifyCode[:]) {
+		// The accept payload carries the server-assigned session ID at the same
+		// width as the packet header, so its layout shifts by one byte between
+		// the native 2-byte format and the legacy 1-byte MasterDNS/StormDNS
+		// format: [sid(1|2)] [cookie] [compression] [verifyCode(4)].
+		sidLen := 2
+		if VpnProto.LegacySessionID() {
+			sidLen = 1
+		}
+		verifyStart := sidLen + 2
+		acceptSize := verifyStart + len(verifyCode)
+		if len(packet.Payload) < acceptSize || !bytes.Equal(packet.Payload[verifyStart:verifyStart+len(verifyCode)], verifyCode[:]) {
 			return ErrSessionInitFailed
 		}
 
-		c.sessionID = uint16(packet.Payload[0])<<8 | uint16(packet.Payload[1])
-		c.sessionCookie = packet.Payload[2]
+		if sidLen == 1 {
+			c.sessionID = uint16(packet.Payload[0])
+		} else {
+			c.sessionID = uint16(packet.Payload[0])<<8 | uint16(packet.Payload[1])
+		}
+		c.sessionCookie = packet.Payload[sidLen]
 		c.responseMode = initPayload[0]
-		c.uploadCompression, c.downloadCompression = compression.SplitPair(packet.Payload[3])
+		c.uploadCompression, c.downloadCompression = compression.SplitPair(packet.Payload[sidLen+1])
 		c.sessionReady = true
 		c.applySessionCompressionPolicy()
 		c.clearSessionInitBusyUntil()

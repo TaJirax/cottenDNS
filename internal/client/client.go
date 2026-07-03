@@ -389,6 +389,12 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 	// into labels and the matching capacity math).
 	DnsParser.SetQNameLabelLength(cfg.QNameLabelLength)
 
+	// Select the on-wire session-ID width to match the target server's engine
+	// generation (1-byte MasterDNS/StormDNS vs 2-byte CottenDns native) before
+	// any packet is built or parsed. A client process serves one profile, so
+	// this process-wide setting is stable for the session.
+	VpnProto.ConfigureLegacySessionID(cfg.LegacySessionID)
+
 	var responseMode uint8
 	if cfg.BaseEncodeData {
 		responseMode = mtuProbeBase64Reply

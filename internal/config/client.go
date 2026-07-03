@@ -80,6 +80,10 @@ type ClientConfig struct {
 	AutoDisableMinObservations            int     `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
 	AutoDisableCheckIntervalSeconds       float64 `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
 	BaseEncodeData                        bool    `toml:"BASE_ENCODE_DATA"`
+	// LegacySessionID selects the 1-byte on-wire session-ID format used by
+	// MasterDNS/StormDNS/WhiteDNS servers. Default false uses CottenDns's 2-byte
+	// native format. Must match the target server's engine generation.
+	LegacySessionID                       bool    `toml:"LEGACY_SESSION_ID"`
 	UploadCompressionType                 int     `toml:"UPLOAD_COMPRESSION_TYPE"`
 	DownloadCompressionType               int     `toml:"DOWNLOAD_COMPRESSION_TYPE"`
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
@@ -291,6 +295,7 @@ func defaultClientConfig() ClientConfig {
 		AutoDisableMinObservations:            3,
 		AutoDisableCheckIntervalSeconds:       1.0,
 		BaseEncodeData:                        false,
+		LegacySessionID:                       false,
 		UploadCompressionType:                 2,
 		DownloadCompressionType:               2,
 		CompressionMinSize:                    compression.DefaultMinSize,
