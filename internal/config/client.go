@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -25,154 +25,155 @@ import (
 )
 
 type ClientConfig struct {
-	ConfigDir                             string            `toml:"-"`
-	ConfigPath                            string            `toml:"-"`
-	ResolversFilePath                     string            `toml:"-"`
-	explicitRX_TX_Workers                 bool              `toml:"-"`
-	ProtocolType                          string            `toml:"PROTOCOL_TYPE"`
-	Domains                               []string          `toml:"DOMAINS"`
-	ListenIP                              string            `toml:"LISTEN_IP"`
-	ListenPort                            int               `toml:"LISTEN_PORT"`
-	SOCKS5Auth                            bool              `toml:"SOCKS5_AUTH"`
-	SOCKS5User                            string            `toml:"SOCKS5_USER"`
-	SOCKS5Pass                            string            `toml:"SOCKS5_PASS"`
-	LocalDNSEnabled                       bool              `toml:"LOCAL_DNS_ENABLED"`
-	LocalDNSIP                            string            `toml:"LOCAL_DNS_IP"`
-	LocalDNSPort                          int               `toml:"LOCAL_DNS_PORT"`
-	LocalDNSCacheMaxRecords               int               `toml:"LOCAL_DNS_CACHE_MAX_RECORDS"`
-	LocalDNSCacheTTLSeconds               float64           `toml:"LOCAL_DNS_CACHE_TTL_SECONDS"`
-	LocalDNSPendingTimeoutSec             float64           `toml:"LOCAL_DNS_PENDING_TIMEOUT_SECONDS"`
-	LocalDNSCachePersist                  bool              `toml:"LOCAL_DNS_CACHE_PERSIST_TO_FILE"`
-	LocalDNSCacheFlushSec                 float64           `toml:"LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS"`
-	ResolverBalancingStrategy             int               `toml:"RESOLVER_BALANCING_STRATEGY"`
+	ConfigDir                 string   `toml:"-"`
+	ConfigPath                string   `toml:"-"`
+	ResolversFilePath         string   `toml:"-"`
+	explicitRX_TX_Workers     bool     `toml:"-"`
+	ConfigPreset              string   `toml:"CONFIG_PRESET"`
+	ProtocolType              string   `toml:"PROTOCOL_TYPE"`
+	Domains                   []string `toml:"DOMAINS"`
+	ListenIP                  string   `toml:"LISTEN_IP"`
+	ListenPort                int      `toml:"LISTEN_PORT"`
+	SOCKS5Auth                bool     `toml:"SOCKS5_AUTH"`
+	SOCKS5User                string   `toml:"SOCKS5_USER"`
+	SOCKS5Pass                string   `toml:"SOCKS5_PASS"`
+	LocalDNSEnabled           bool     `toml:"LOCAL_DNS_ENABLED"`
+	LocalDNSIP                string   `toml:"LOCAL_DNS_IP"`
+	LocalDNSPort              int      `toml:"LOCAL_DNS_PORT"`
+	LocalDNSCacheMaxRecords   int      `toml:"LOCAL_DNS_CACHE_MAX_RECORDS"`
+	LocalDNSCacheTTLSeconds   float64  `toml:"LOCAL_DNS_CACHE_TTL_SECONDS"`
+	LocalDNSPendingTimeoutSec float64  `toml:"LOCAL_DNS_PENDING_TIMEOUT_SECONDS"`
+	LocalDNSCachePersist      bool     `toml:"LOCAL_DNS_CACHE_PERSIST_TO_FILE"`
+	LocalDNSCacheFlushSec     float64  `toml:"LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS"`
+	ResolverBalancingStrategy int      `toml:"RESOLVER_BALANCING_STRATEGY"`
 	// QNameLabelLength is the target maximum DNS label length when laying the
 	// tunnel payload into the query name (1..63). The default 63 packs the payload
 	// into the fewest, longest labels (max capacity); a smaller value produces
 	// shorter, more numerous labels that look less like a classic DNS tunnel, at
 	// the cost of some payload capacity per query. Server-transparent (the server
 	// reassembles the labels regardless of how they are split).
-	QNameLabelLength                      int               `toml:"QNAME_LABEL_LENGTH"`
+	QNameLabelLength int `toml:"QNAME_LABEL_LENGTH"`
 	// ResolverRateLimitEnabled turns on per-resolver adaptive pacing: a resolver
 	// that signals overload (RCODE != 0 or repeated timeouts) is briefly cooled
 	// down and deprioritized so its load shifts to resolvers with headroom. It is
 	// self-gating (does nothing to healthy resolvers) and never idles the client.
 	// Default true.
-	ResolverRateLimitEnabled              bool              `toml:"RESOLVER_RATE_LIMIT_ENABLED"`
+	ResolverRateLimitEnabled bool `toml:"RESOLVER_RATE_LIMIT_ENABLED"`
 	// ResolverTransport selects how DNS queries reach resolvers:
 	//   "auto" (default) — probe over UDP first; if no resolver passes MTU
 	//                       testing, retry the whole fleet over TCP/53.
 	//   "udp"            — UDP only (legacy).
 	//   "tcp"            — TCP/53 only (for networks that block UDP/53).
-	ResolverTransport                     string            `toml:"RESOLVER_TRANSPORT"`
-	UploadPacketDuplicationCount          int               `toml:"UPLOAD_PACKET_DUPLICATION_COUNT"`
-	DownloadPacketDuplicationCount        int               `toml:"DOWNLOAD_PACKET_DUPLICATION_COUNT"`
-	UploadSetupPacketDuplicationCount     int               `toml:"UPLOAD_SETUP_PACKET_DUPLICATION_COUNT"`
-	DownloadSetupPacketDuplicationCount   int               `toml:"DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT"`
-	StreamResolverFailoverResendThreshold int               `toml:"STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD"`
-	StreamResolverFailoverCooldownSec     float64           `toml:"STREAM_RESOLVER_FAILOVER_COOLDOWN"`
-	RecheckInactiveServersEnabled         bool              `toml:"RECHECK_INACTIVE_SERVERS_ENABLED"`
-	RecheckInactiveIntervalSeconds        float64           `toml:"RECHECK_INACTIVE_INTERVAL_SECONDS"`
-	RecheckServerIntervalSeconds          float64           `toml:"RECHECK_SERVER_INTERVAL_SECONDS"`
-	RecheckBatchSize                      int               `toml:"RECHECK_BATCH_SIZE"`
-	AutoDisableTimeoutServers             bool              `toml:"AUTO_DISABLE_TIMEOUT_SERVERS"`
-	AutoDisableTimeoutWindowSeconds       float64           `toml:"AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS"`
-	AutoDisableMinObservations            int               `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
-	AutoDisableCheckIntervalSeconds       float64           `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
-	BaseEncodeData                        bool              `toml:"BASE_ENCODE_DATA"`
-	UploadCompressionType                 int               `toml:"UPLOAD_COMPRESSION_TYPE"`
-	DownloadCompressionType               int               `toml:"DOWNLOAD_COMPRESSION_TYPE"`
-	CompressionMinSize                    int               `toml:"COMPRESSION_MIN_SIZE"`
-	DataEncryptionMethod                  int               `toml:"DATA_ENCRYPTION_METHOD"`
-	EncryptionKey                         string            `toml:"ENCRYPTION_KEY"`
-	MinUploadMTU                          int               `toml:"MIN_UPLOAD_MTU"`
-	MinDownloadMTU                        int               `toml:"MIN_DOWNLOAD_MTU"`
-	MaxUploadMTU                          int               `toml:"MAX_UPLOAD_MTU"`
-	MaxDownloadMTU                        int               `toml:"MAX_DOWNLOAD_MTU"`
-	MTUTestRetriesResolvers               int               `toml:"MTU_TEST_RETRIES_RESOLVERS"`
-	MTUTestRetriesLogs                    int               `toml:"MTU_TEST_RETRIES_LOGS"`
-	MTUTestTimeoutResolvers               float64           `toml:"MTU_TEST_TIMEOUT_RESOLVERS"`
-	MTUTestTimeoutLogs                    float64           `toml:"MTU_TEST_TIMEOUT_LOGS"`
-	MTUTestParallelismResolvers           int               `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
-	MTUTestParallelismLogs                int               `toml:"MTU_TEST_PARALLELISM_LOGS"`
+	ResolverTransport                     string  `toml:"RESOLVER_TRANSPORT"`
+	UploadPacketDuplicationCount          int     `toml:"UPLOAD_PACKET_DUPLICATION_COUNT"`
+	DownloadPacketDuplicationCount        int     `toml:"DOWNLOAD_PACKET_DUPLICATION_COUNT"`
+	UploadSetupPacketDuplicationCount     int     `toml:"UPLOAD_SETUP_PACKET_DUPLICATION_COUNT"`
+	DownloadSetupPacketDuplicationCount   int     `toml:"DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT"`
+	StreamResolverFailoverResendThreshold int     `toml:"STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD"`
+	StreamResolverFailoverCooldownSec     float64 `toml:"STREAM_RESOLVER_FAILOVER_COOLDOWN"`
+	RecheckInactiveServersEnabled         bool    `toml:"RECHECK_INACTIVE_SERVERS_ENABLED"`
+	RecheckInactiveIntervalSeconds        float64 `toml:"RECHECK_INACTIVE_INTERVAL_SECONDS"`
+	RecheckServerIntervalSeconds          float64 `toml:"RECHECK_SERVER_INTERVAL_SECONDS"`
+	RecheckBatchSize                      int     `toml:"RECHECK_BATCH_SIZE"`
+	AutoDisableTimeoutServers             bool    `toml:"AUTO_DISABLE_TIMEOUT_SERVERS"`
+	AutoDisableTimeoutWindowSeconds       float64 `toml:"AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS"`
+	AutoDisableMinObservations            int     `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
+	AutoDisableCheckIntervalSeconds       float64 `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
+	BaseEncodeData                        bool    `toml:"BASE_ENCODE_DATA"`
+	UploadCompressionType                 int     `toml:"UPLOAD_COMPRESSION_TYPE"`
+	DownloadCompressionType               int     `toml:"DOWNLOAD_COMPRESSION_TYPE"`
+	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
+	DataEncryptionMethod                  int     `toml:"DATA_ENCRYPTION_METHOD"`
+	EncryptionKey                         string  `toml:"ENCRYPTION_KEY"`
+	MinUploadMTU                          int     `toml:"MIN_UPLOAD_MTU"`
+	MinDownloadMTU                        int     `toml:"MIN_DOWNLOAD_MTU"`
+	MaxUploadMTU                          int     `toml:"MAX_UPLOAD_MTU"`
+	MaxDownloadMTU                        int     `toml:"MAX_DOWNLOAD_MTU"`
+	MTUTestRetriesResolvers               int     `toml:"MTU_TEST_RETRIES_RESOLVERS"`
+	MTUTestRetriesLogs                    int     `toml:"MTU_TEST_RETRIES_LOGS"`
+	MTUTestTimeoutResolvers               float64 `toml:"MTU_TEST_TIMEOUT_RESOLVERS"`
+	MTUTestTimeoutLogs                    float64 `toml:"MTU_TEST_TIMEOUT_LOGS"`
+	MTUTestParallelismResolvers           int     `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
+	MTUTestParallelismLogs                int     `toml:"MTU_TEST_PARALLELISM_LOGS"`
 	// Adaptive per-group MTU (loss-aware probing + clustering).
 	// MTUProbeSamples > 1 enables loss-aware probing: each candidate MTU is
 	// probed this many times and accepted only if its measured loss is at or
 	// below MTUMaxLoss (instead of the legacy "pass if any retry succeeds").
 	// =1 (default) keeps the legacy retry behavior unchanged.
-	MTUProbeSamples                       int               `toml:"MTU_PROBE_SAMPLES"`
-	MTUMaxLoss                            float64           `toml:"MTU_MAX_LOSS"`
+	MTUProbeSamples int     `toml:"MTU_PROBE_SAMPLES"`
+	MTUMaxLoss      float64 `toml:"MTU_MAX_LOSS"`
 	// MTUGroupGapRatio controls resolver clustering by viable MTU: a new group
 	// starts wherever the gap between consecutive sorted download MTUs exceeds
 	// this fraction of the larger value (e.g. 0.25 = 25%).
-	MTUGroupGapRatio                      float64           `toml:"MTU_GROUP_GAP_RATIO"`
+	MTUGroupGapRatio float64 `toml:"MTU_GROUP_GAP_RATIO"`
 	// MTUAdaptiveGrouping, when true (default), raises the session MTU to the
 	// throughput-optimal operating point — the MTU D that maximizes D × (number
 	// of resolvers that can sustain D) — and holds resolvers that cannot sustain
 	// it in a backup tier (kept valid and used only as failover when the active
 	// pool is exhausted). When false, the legacy global-minimum MTU across all
 	// valid resolvers is used.
-	MTUAdaptiveGrouping                   bool              `toml:"MTU_ADAPTIVE_GROUPING"`
+	MTUAdaptiveGrouping bool `toml:"MTU_ADAPTIVE_GROUPING"`
 	// Active MTU test parameters resolved from the startup mode at runtime.
 	// Populated by ApplyStartupModeMTU after the mode is known. Not loaded from TOML.
-	MTUTestRetries     int     `toml:"-"`
-	MTUTestTimeout     float64 `toml:"-"`
-	MTUTestParallelism int     `toml:"-"`
-	RX_TX_Workers                         int               `toml:"RX_TX_WORKERS"`
-	LegacyTunnelReaderWorkers             int               `toml:"TUNNEL_READER_WORKERS"`
-	LegacyTunnelWriterWorkers             int               `toml:"TUNNEL_WRITER_WORKERS"`
-	TunnelProcessWorkers                  int               `toml:"TUNNEL_PROCESS_WORKERS"`
-	TunnelPacketTimeoutSec                float64           `toml:"TUNNEL_PACKET_TIMEOUT_SECONDS"`
-	DispatcherIdlePollIntervalSeconds     float64           `toml:"DISPATCHER_IDLE_POLL_INTERVAL_SECONDS"`
-	PingAggressiveIntervalSeconds         float64           `toml:"PING_AGGRESSIVE_INTERVAL_SECONDS"`
-	PingLazyIntervalSeconds               float64           `toml:"PING_LAZY_INTERVAL_SECONDS"`
-	PingCooldownIntervalSeconds           float64           `toml:"PING_COOLDOWN_INTERVAL_SECONDS"`
-	PingColdIntervalSeconds               float64           `toml:"PING_COLD_INTERVAL_SECONDS"`
-	PingWarmThresholdSeconds              float64           `toml:"PING_WARM_THRESHOLD_SECONDS"`
-	PingCoolThresholdSeconds              float64           `toml:"PING_COOL_THRESHOLD_SECONDS"`
-	PingColdThresholdSeconds              float64           `toml:"PING_COLD_THRESHOLD_SECONDS"`
-	PingWatchdogTimeoutSeconds            float64           `toml:"PING_WATCHDOG_TIMEOUT_SECONDS"`
-	TXChannelSize                         int               `toml:"TX_CHANNEL_SIZE"`
-	RXChannelSize                         int               `toml:"RX_CHANNEL_SIZE"`
-	ResolverUDPConnectionPoolSize         int               `toml:"RESOLVER_UDP_CONNECTION_POOL_SIZE"`
-	StreamQueueInitialCapacity            int               `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
-	OrphanQueueInitialCapacity            int               `toml:"ORPHAN_QUEUE_INITIAL_CAPACITY"`
-	DNSResponseFragmentStoreCap           int               `toml:"DNS_RESPONSE_FRAGMENT_STORE_CAPACITY"`
-	DNSResponseFragmentTimeoutSeconds     float64           `toml:"DNS_RESPONSE_FRAGMENT_TIMEOUT_SECONDS"`
-	SOCKSUDPAssociateReadTimeoutSeconds   float64           `toml:"SOCKS_UDP_ASSOCIATE_READ_TIMEOUT_SECONDS"`
-	ClientTerminalStreamRetentionSeconds  float64           `toml:"CLIENT_TERMINAL_STREAM_RETENTION_SECONDS"`
-	ClientCancelledSetupRetentionSeconds  float64           `toml:"CLIENT_CANCELLED_SETUP_RETENTION_SECONDS"`
-	SessionInitRetryBaseSeconds           float64           `toml:"SESSION_INIT_RETRY_BASE_SECONDS"`
-	SessionInitRetryStepSeconds           float64           `toml:"SESSION_INIT_RETRY_STEP_SECONDS"`
-	SessionInitRetryLinearAfter           int               `toml:"SESSION_INIT_RETRY_LINEAR_AFTER"`
-	SessionInitRetryMaxSeconds            float64           `toml:"SESSION_INIT_RETRY_MAX_SECONDS"`
-	SessionInitBusyRetryIntervalSeconds   float64           `toml:"SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS"`
-	LogLevel                              string            `toml:"LOG_LEVEL"`
-	LogToFile                             bool              `toml:"LOG_TO_FILE"`
-	LogDir                                string            `toml:"LOG_DIR"`
-	LogFileName                           string            `toml:"LOG_FILE_NAME"`
-	StatsReportIntervalSeconds            float64           `toml:"STATS_REPORT_INTERVAL_SECONDS"`
-	StartupMode                           string            `toml:"STARTUP_MODE"`
-	LogScanMaxDays                        int               `toml:"LOG_SCAN_MAX_DAYS"`
-	LogScanMaxResolvers                   int               `toml:"LOG_SCAN_MAX_RESOLVERS"`
-	LogBasedMTUVerify                     bool              `toml:"LOG_BASED_MTU_VERIFY"`
-	MaxPacketsPerBatch                    int               `toml:"MAX_PACKETS_PER_BATCH"`
-	ARQWindowSize                         int               `toml:"ARQ_WINDOW_SIZE"`
-	ARQInitialRTOSeconds                  float64           `toml:"ARQ_INITIAL_RTO_SECONDS"`
-	ARQMaxRTOSeconds                      float64           `toml:"ARQ_MAX_RTO_SECONDS"`
-	ARQControlInitialRTOSeconds           float64           `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
-	ARQControlMaxRTOSeconds               float64           `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
-	ARQMaxControlRetries                  int               `toml:"ARQ_MAX_CONTROL_RETRIES"`
-	ARQInactivityTimeoutSeconds           float64           `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
-	ARQDataPacketTTLSeconds               float64           `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
-	ARQControlPacketTTLSeconds            float64           `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
-	ARQMaxDataRetries                     int               `toml:"ARQ_MAX_DATA_RETRIES"`
-	ARQDataNackMaxGap                     int               `toml:"ARQ_DATA_NACK_MAX_GAP"`
-	ARQDataNackInitialDelaySeconds        float64           `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
-	ARQDataNackRepeatSeconds              float64           `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
-	ARQTerminalDrainTimeoutSec            float64           `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
-	ARQTerminalAckWaitTimeoutSec          float64           `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
-	Resolvers                             []ResolverAddress `toml:"-"`
-	ResolverMap                           map[string]int    `toml:"-"`
+	MTUTestRetries                       int               `toml:"-"`
+	MTUTestTimeout                       float64           `toml:"-"`
+	MTUTestParallelism                   int               `toml:"-"`
+	RX_TX_Workers                        int               `toml:"RX_TX_WORKERS"`
+	LegacyTunnelReaderWorkers            int               `toml:"TUNNEL_READER_WORKERS"`
+	LegacyTunnelWriterWorkers            int               `toml:"TUNNEL_WRITER_WORKERS"`
+	TunnelProcessWorkers                 int               `toml:"TUNNEL_PROCESS_WORKERS"`
+	TunnelPacketTimeoutSec               float64           `toml:"TUNNEL_PACKET_TIMEOUT_SECONDS"`
+	DispatcherIdlePollIntervalSeconds    float64           `toml:"DISPATCHER_IDLE_POLL_INTERVAL_SECONDS"`
+	PingAggressiveIntervalSeconds        float64           `toml:"PING_AGGRESSIVE_INTERVAL_SECONDS"`
+	PingLazyIntervalSeconds              float64           `toml:"PING_LAZY_INTERVAL_SECONDS"`
+	PingCooldownIntervalSeconds          float64           `toml:"PING_COOLDOWN_INTERVAL_SECONDS"`
+	PingColdIntervalSeconds              float64           `toml:"PING_COLD_INTERVAL_SECONDS"`
+	PingWarmThresholdSeconds             float64           `toml:"PING_WARM_THRESHOLD_SECONDS"`
+	PingCoolThresholdSeconds             float64           `toml:"PING_COOL_THRESHOLD_SECONDS"`
+	PingColdThresholdSeconds             float64           `toml:"PING_COLD_THRESHOLD_SECONDS"`
+	PingWatchdogTimeoutSeconds           float64           `toml:"PING_WATCHDOG_TIMEOUT_SECONDS"`
+	TXChannelSize                        int               `toml:"TX_CHANNEL_SIZE"`
+	RXChannelSize                        int               `toml:"RX_CHANNEL_SIZE"`
+	ResolverUDPConnectionPoolSize        int               `toml:"RESOLVER_UDP_CONNECTION_POOL_SIZE"`
+	StreamQueueInitialCapacity           int               `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
+	OrphanQueueInitialCapacity           int               `toml:"ORPHAN_QUEUE_INITIAL_CAPACITY"`
+	DNSResponseFragmentStoreCap          int               `toml:"DNS_RESPONSE_FRAGMENT_STORE_CAPACITY"`
+	DNSResponseFragmentTimeoutSeconds    float64           `toml:"DNS_RESPONSE_FRAGMENT_TIMEOUT_SECONDS"`
+	SOCKSUDPAssociateReadTimeoutSeconds  float64           `toml:"SOCKS_UDP_ASSOCIATE_READ_TIMEOUT_SECONDS"`
+	ClientTerminalStreamRetentionSeconds float64           `toml:"CLIENT_TERMINAL_STREAM_RETENTION_SECONDS"`
+	ClientCancelledSetupRetentionSeconds float64           `toml:"CLIENT_CANCELLED_SETUP_RETENTION_SECONDS"`
+	SessionInitRetryBaseSeconds          float64           `toml:"SESSION_INIT_RETRY_BASE_SECONDS"`
+	SessionInitRetryStepSeconds          float64           `toml:"SESSION_INIT_RETRY_STEP_SECONDS"`
+	SessionInitRetryLinearAfter          int               `toml:"SESSION_INIT_RETRY_LINEAR_AFTER"`
+	SessionInitRetryMaxSeconds           float64           `toml:"SESSION_INIT_RETRY_MAX_SECONDS"`
+	SessionInitBusyRetryIntervalSeconds  float64           `toml:"SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS"`
+	LogLevel                             string            `toml:"LOG_LEVEL"`
+	LogToFile                            bool              `toml:"LOG_TO_FILE"`
+	LogDir                               string            `toml:"LOG_DIR"`
+	LogFileName                          string            `toml:"LOG_FILE_NAME"`
+	StatsReportIntervalSeconds           float64           `toml:"STATS_REPORT_INTERVAL_SECONDS"`
+	StartupMode                          string            `toml:"STARTUP_MODE"`
+	LogScanMaxDays                       int               `toml:"LOG_SCAN_MAX_DAYS"`
+	LogScanMaxResolvers                  int               `toml:"LOG_SCAN_MAX_RESOLVERS"`
+	LogBasedMTUVerify                    bool              `toml:"LOG_BASED_MTU_VERIFY"`
+	MaxPacketsPerBatch                   int               `toml:"MAX_PACKETS_PER_BATCH"`
+	ARQWindowSize                        int               `toml:"ARQ_WINDOW_SIZE"`
+	ARQInitialRTOSeconds                 float64           `toml:"ARQ_INITIAL_RTO_SECONDS"`
+	ARQMaxRTOSeconds                     float64           `toml:"ARQ_MAX_RTO_SECONDS"`
+	ARQControlInitialRTOSeconds          float64           `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
+	ARQControlMaxRTOSeconds              float64           `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
+	ARQMaxControlRetries                 int               `toml:"ARQ_MAX_CONTROL_RETRIES"`
+	ARQInactivityTimeoutSeconds          float64           `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
+	ARQDataPacketTTLSeconds              float64           `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
+	ARQControlPacketTTLSeconds           float64           `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
+	ARQMaxDataRetries                    int               `toml:"ARQ_MAX_DATA_RETRIES"`
+	ARQDataNackMaxGap                    int               `toml:"ARQ_DATA_NACK_MAX_GAP"`
+	ARQDataNackInitialDelaySeconds       float64           `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
+	ARQDataNackRepeatSeconds             float64           `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
+	ARQTerminalDrainTimeoutSec           float64           `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
+	ARQTerminalAckWaitTimeoutSec         float64           `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
+	Resolvers                            []ResolverAddress `toml:"-"`
+	ResolverMap                          map[string]int    `toml:"-"`
 	// QUERY_TYPES is the set of DNS record types the client rotates over when
 	// building tunnel queries (A1, DPI-resistance). Names are case-insensitive,
 	// e.g. ["TXT", "CNAME", "A", "AAAA"]. Empty / unset preserves the historical
@@ -194,6 +195,50 @@ type ClientConfig struct {
 	// ADAPTIVE_DUPLICATION_TARGET_DELIVERY is the per-packet delivery probability
 	// adaptive duplication aims for (0.5..0.999). Default 0.95.
 	AdaptiveDuplicationTargetDelivery float64 `toml:"ADAPTIVE_DUPLICATION_TARGET_DELIVERY"`
+
+	// --- DNS query-shaping knobs (client-only, server-transparent) ---
+	// None of the following require a server update: the server echoes the DNS
+	// transaction ID without validating it, lowercases the whole QNAME before
+	// decoding, and (for the EDNS cookie) never even sees it because the recursive
+	// resolver terminates EDNS on the client->resolver leg.
+
+	// DNS_RANDOMIZE_QUERY_ID randomizes the DNS transaction ID of every tunnel
+	// query instead of using a sequential counter. Real stub resolvers randomize
+	// the ID per query (anti-spoofing); a monotonic sequence to one zone is a
+	// tunnel tell and a mild spoofing weakness. Default true.
+	DNSRandomizeQueryID bool `toml:"DNS_RANDOMIZE_QUERY_ID"`
+	// DNS_EDNS_COOKIE adds an RFC 7873 EDNS Client Cookie (8 random bytes) to the
+	// OPT record of each tunnel query so the query looks like a modern stub
+	// resolver on the client->resolver leg (where restrictive-network DPI observes
+	// it). The recursive resolver terminates EDNS, so the cookie never reaches the
+	// CottenDNS server. Default true.
+	DNSEDNSCookie bool `toml:"DNS_EDNS_COOKIE"`
+	// DNS_QNAME_CASE_RANDOMIZATION applies DNS 0x20 mixed-case encoding to the
+	// query name (random per-letter case). The server lowercases the whole QNAME
+	// before decoding, so it is server-transparent and can never desync. It makes
+	// the all-lowercase base32 payload look less uniform but does NOT reduce label
+	// entropy, so its anti-detection value is modest. Default false (opt-in).
+	DNSQNameCaseRandomization bool `toml:"DNS_QNAME_CASE_RANDOMIZATION"`
+	// EDNS_UDP_SIZE is the requestor's UDP payload size advertised in the OPT
+	// record (bytes). Larger values let resolvers return larger answers (needed for
+	// high download MTU / throughput); a smaller value (e.g. 1232) looks more like
+	// a modern stub but can cap the answer size. Default 4096, clamped to
+	// [512, 4096] (unset falls back to 4096).
+	EDNSUDPSize int `toml:"EDNS_UDP_SIZE"`
+
+	// RESOLVER_IGNORE_INJECTED_NXDOMAIN hardens the client against on-path DNS
+	// poisoning. Restrictive networks race a forged NXDOMAIN back to the client
+	// while the real authoritative answer still arrives, so the resolver stays
+	// usable — but counting that forgery as a failure lets the censor throttle
+	// and disable perfectly working resolvers for free (and thus slow you down).
+	// When true (default), a NXDOMAIN response carrying no tunnel payload is
+	// treated as injection noise: it does not throttle, disable, or otherwise
+	// penalize the resolver. Genuine unreachability is still caught by the one
+	// signal injection cannot forge — the query times out with no real answer.
+	// Costs nothing (no extra queries or bytes); it only stops the client from
+	// punishing resolvers the censor is forging failures for. Set false to
+	// restore the legacy behavior of counting every NXDOMAIN as a failure.
+	ResolverIgnoreInjectedNXDOMAIN bool `toml:"RESOLVER_IGNORE_INJECTED_NXDOMAIN"`
 }
 
 type ClientConfigOverrides struct {
@@ -211,6 +256,7 @@ type ClientConfigFlagBinder struct {
 
 func defaultClientConfig() ClientConfig {
 	return ClientConfig{
+		ConfigPreset:                          "default",
 		ProtocolType:                          "SOCKS5",
 		Domains:                               nil,
 		ListenIP:                              "127.0.0.1",
@@ -264,6 +310,11 @@ func defaultClientConfig() ClientConfig {
 		MTUMaxLoss:                            0.0,
 		MTUGroupGapRatio:                      0.25,
 		MTUAdaptiveGrouping:                   true,
+		DNSRandomizeQueryID:                   true,
+		DNSEDNSCookie:                         true,
+		DNSQNameCaseRandomization:             false,
+		EDNSUDPSize:                           4096,
+		ResolverIgnoreInjectedNXDOMAIN:        true,
 		RX_TX_Workers:                         4,
 		TunnelProcessWorkers:                  4,
 		TunnelPacketTimeoutSec:                10.0,
@@ -367,6 +418,11 @@ func loadClientConfigFile(filename string) (ClientConfig, error) {
 	cfg.ConfigDir = filepath.Dir(path)
 	cfg.ResolversFilePath = ""
 	cfg.explicitRX_TX_Workers = meta.IsDefined("RX_TX_WORKERS")
+	if err := applyClientConfigPreset(&cfg, func(key string) bool {
+		return meta.IsDefined(key)
+	}); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -382,6 +438,14 @@ func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverri
 	if len(overrides.Values) > 0 {
 		if err := applyClientConfigOverrideValues(&cfg, overrides.Values); err != nil {
 			return cfg, err
+		}
+		if _, ok := overrides.Values["ConfigPreset"]; ok {
+			clientType := reflect.TypeOf(ClientConfig{})
+			if err := applyClientConfigPreset(&cfg, func(key string) bool {
+				return overrideValuesDefineTOMLKey(overrides.Values, clientType, key)
+			}); err != nil {
+				return cfg, err
+			}
 		}
 	}
 
@@ -405,6 +469,11 @@ func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverri
 }
 
 func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
+	cfg.ConfigPreset = normalizeConfigPresetName(cfg.ConfigPreset)
+	if !isKnownConfigPreset(cfg.ConfigPreset) {
+		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: default, speed, survival, tcp-survival)", cfg.ConfigPreset)
+	}
+
 	cfg.ProtocolType = strings.ToUpper(strings.TrimSpace(cfg.ProtocolType))
 	cfg.LogLevel = strings.TrimSpace(cfg.LogLevel)
 	if cfg.LogLevel == "" {
@@ -485,6 +554,17 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 
 	if cfg.QNameLabelLength <= 0 || cfg.QNameLabelLength > 63 {
 		cfg.QNameLabelLength = 63
+	}
+
+	// EDNS_UDP_SIZE: unset/non-positive falls back to the default; otherwise clamp
+	// to a sane DNS range so a typo can neither underflow below a minimal message
+	// nor advertise an implausibly large buffer.
+	if cfg.EDNSUDPSize <= 0 {
+		cfg.EDNSUDPSize = 4096
+	} else if cfg.EDNSUDPSize < 512 {
+		cfg.EDNSUDPSize = 512
+	} else if cfg.EDNSUDPSize > 4096 {
+		cfg.EDNSUDPSize = 4096
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.ResolverTransport)) {

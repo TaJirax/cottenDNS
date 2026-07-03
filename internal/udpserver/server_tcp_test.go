@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -99,6 +100,52 @@ func TestServeTCPDNSMessages_EmptyResponseKeepsConnOpen(t *testing.T) {
 	}
 	if len(resp) != 1 || resp[0] != 0x99 {
 		t.Fatalf("unexpected response: %v", resp)
+	}
+}
+
+func TestServeTCPDNSMessages_MaxQueriesPerConn(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	handler := func(q []byte) []byte {
+		return append([]byte(nil), q...)
+	}
+	go func() {
+		serveTCPDNSMessagesWithOptions(context.Background(), server, handler, tcpServerOptions{
+			readIdleTimeout:   2 * time.Second,
+			writeTimeout:      2 * time.Second,
+			maxQueriesPerConn: 1,
+		})
+		server.Close()
+	}()
+
+	if err := writeTCPDNSMessage(client, []byte{0x01}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := readTCPDNSMessage(client); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := readTCPDNSMessage(client); err == nil {
+		t.Fatal("expected connection to close after max queries")
+	}
+}
+
+func TestReserveTCPIPSlotHonorsLimitAndRelease(t *testing.T) {
+	activeByIP := map[string]int{}
+	var mu sync.Mutex
+
+	if !reserveTCPIPSlot("198.51.100.1", 1, &mu, activeByIP) {
+		t.Fatal("first slot should be accepted")
+	}
+	if reserveTCPIPSlot("198.51.100.1", 1, &mu, activeByIP) {
+		t.Fatal("second slot should be rejected at limit")
+	}
+	releaseTCPIPSlot("198.51.100.1", &mu, activeByIP)
+	if !reserveTCPIPSlot("198.51.100.1", 1, &mu, activeByIP) {
+		t.Fatal("slot should be accepted after release")
 	}
 }
 

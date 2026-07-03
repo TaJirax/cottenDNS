@@ -468,6 +468,26 @@ fallback keeps the tunnel alive when UDP/53 is filtered.
 - `RESOLVER_RATE_LIMIT_ENABLED` (true) — per-resolver adaptive pacing.
 - `QNAME_LABEL_LENGTH` (63) — QNAME label reshaping (smaller = shorter, jittered
   labels; lower fingerprint, less capacity).
+- `DNS_RANDOMIZE_QUERY_ID` (true) — random DNS transaction ID per query instead of
+  a sequential counter. Client-only; the server echoes the ID without validating
+  it, so no server change is needed.
+- `DNS_EDNS_COOKIE` (true) — add an RFC 7873 EDNS Client Cookie to each query's OPT
+  record so it looks like a modern stub on the client→resolver leg. The recursive
+  resolver terminates EDNS, so the cookie never reaches the server (client-only).
+- `DNS_QNAME_CASE_RANDOMIZATION` (false) — DNS 0x20 mixed-case QNAME. The server
+  lowercases the name before decoding (`writeLowerASCIILabel` at parse time), so it
+  is server-transparent and cannot desync. Modest anti-detection value (does not
+  reduce label entropy); opt-in.
+- `EDNS_UDP_SIZE` (4096, clamped to [512, 4096]) — advertised requestor UDP payload
+  size in the OPT record. Smaller looks more like a modern stub but can cap answer
+  size and hurt throughput. Client-only.
+- `RESOLVER_IGNORE_INJECTED_NXDOMAIN` (true) — on-path DNS-poisoning hardening. A
+  forged NXDOMAIN (no tunnel payload) is treated as injection noise: it does not
+  consume the pending query sample, so the genuine authoritative answer is still
+  scored as a success, and the resolver is never throttled or disabled for it.
+  Genuine unreachability is still caught by the pending sample timing out (a signal
+  injection cannot forge). Client-only; zero extra queries/bytes. It actively
+  *recovers* throughput under poisoning by keeping working resolvers in the pool.
 - `QUERY_TYPES` — DNS record types to rotate (TXT/CNAME/A/NULL/HTTPS/SVCB/…).
 - `MTU_PROBE_SAMPLES` (1) / `MTU_MAX_LOSS` (0.0) — loss-aware probing.
 - `MTU_ADAPTIVE_GROUPING` (true) / `MTU_GROUP_GAP_RATIO` (0.25) — adaptive MTU.

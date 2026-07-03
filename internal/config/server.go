@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -24,17 +24,22 @@ import (
 )
 
 type ServerConfig struct {
-	ConfigDir                         string   `toml:"-"`
-	ConfigPath                        string   `toml:"-"`
-	ProtocolType                      string   `toml:"PROTOCOL_TYPE"`
-	UDPHost                           string   `toml:"UDP_HOST"`
-	UDPPort                           int      `toml:"UDP_PORT"`
-	UDPReaders                        int      `toml:"UDP_READERS"`
+	ConfigDir    string `toml:"-"`
+	ConfigPath   string `toml:"-"`
+	ConfigPreset string `toml:"CONFIG_PRESET"`
+	ProtocolType string `toml:"PROTOCOL_TYPE"`
+	UDPHost      string `toml:"UDP_HOST"`
+	UDPPort      int    `toml:"UDP_PORT"`
+	UDPReaders   int    `toml:"UDP_READERS"`
 	// TCPListenerEnabled also serves DNS-over-TCP on the same host:port, so
 	// clients on networks that filter or truncate UDP/53 can fall back to TCP/53.
 	// Default true. TCPMaxConns caps concurrent TCP connections (0 = default).
 	TCPListenerEnabled                bool     `toml:"TCP_LISTENER_ENABLED"`
 	TCPMaxConns                       int      `toml:"TCP_MAX_CONNS"`
+	TCPMaxConnsPerIP                  int      `toml:"TCP_MAX_CONNS_PER_IP"`
+	TCPMaxQueriesPerConn              int      `toml:"TCP_MAX_QUERIES_PER_CONN"`
+	TCPReadIdleTimeoutSeconds         float64  `toml:"TCP_READ_IDLE_TIMEOUT_SECONDS"`
+	TCPWriteTimeoutSeconds            float64  `toml:"TCP_WRITE_TIMEOUT_SECONDS"`
 	SocketBufferSize                  int      `toml:"SOCKET_BUFFER_SIZE"`
 	MaxConcurrentRequests             int      `toml:"MAX_CONCURRENT_REQUESTS"`
 	DNSRequestWorkers                 int      `toml:"DNS_REQUEST_WORKERS"`
@@ -95,25 +100,25 @@ type ServerConfig struct {
 	// the retransmit rate and turns FEC on once that loss crosses
 	// FECAutoLossThreshold, scaling parity to the measured loss (between FECParity
 	// and FECAutoMaxParity). Below the threshold there is zero FEC overhead.
-	FECAutoEnabled       bool    `toml:"FEC_AUTO_ENABLED"`
-	FECAutoLossThreshold float64 `toml:"FEC_AUTO_LOSS_THRESHOLD"`
-	FECAutoMaxParity     int     `toml:"FEC_AUTO_MAX_PARITY"`
-	LogLevel                          string   `toml:"LOG_LEVEL"`
-	ARQWindowSize                     int      `toml:"ARQ_WINDOW_SIZE"`
-	ARQInitialRTOSeconds              float64  `toml:"ARQ_INITIAL_RTO_SECONDS"`
-	ARQMaxRTOSeconds                  float64  `toml:"ARQ_MAX_RTO_SECONDS"`
-	ARQControlInitialRTOSeconds       float64  `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
-	ARQControlMaxRTOSeconds           float64  `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
-	ARQMaxControlRetries              int      `toml:"ARQ_MAX_CONTROL_RETRIES"`
-	ARQInactivityTimeoutSeconds       float64  `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
-	ARQDataPacketTTLSeconds           float64  `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
-	ARQControlPacketTTLSeconds        float64  `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
-	ARQMaxDataRetries                 int      `toml:"ARQ_MAX_DATA_RETRIES"`
-	ARQDataNackMaxGap                 int      `toml:"ARQ_DATA_NACK_MAX_GAP"`
-	ARQDataNackInitialDelaySeconds    float64  `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
-	ARQDataNackRepeatSeconds          float64  `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
-	ARQTerminalDrainTimeoutSec        float64  `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
-	ARQTerminalAckWaitTimeoutSec      float64  `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
+	FECAutoEnabled                 bool    `toml:"FEC_AUTO_ENABLED"`
+	FECAutoLossThreshold           float64 `toml:"FEC_AUTO_LOSS_THRESHOLD"`
+	FECAutoMaxParity               int     `toml:"FEC_AUTO_MAX_PARITY"`
+	LogLevel                       string  `toml:"LOG_LEVEL"`
+	ARQWindowSize                  int     `toml:"ARQ_WINDOW_SIZE"`
+	ARQInitialRTOSeconds           float64 `toml:"ARQ_INITIAL_RTO_SECONDS"`
+	ARQMaxRTOSeconds               float64 `toml:"ARQ_MAX_RTO_SECONDS"`
+	ARQControlInitialRTOSeconds    float64 `toml:"ARQ_CONTROL_INITIAL_RTO_SECONDS"`
+	ARQControlMaxRTOSeconds        float64 `toml:"ARQ_CONTROL_MAX_RTO_SECONDS"`
+	ARQMaxControlRetries           int     `toml:"ARQ_MAX_CONTROL_RETRIES"`
+	ARQInactivityTimeoutSeconds    float64 `toml:"ARQ_INACTIVITY_TIMEOUT_SECONDS"`
+	ARQDataPacketTTLSeconds        float64 `toml:"ARQ_DATA_PACKET_TTL_SECONDS"`
+	ARQControlPacketTTLSeconds     float64 `toml:"ARQ_CONTROL_PACKET_TTL_SECONDS"`
+	ARQMaxDataRetries              int     `toml:"ARQ_MAX_DATA_RETRIES"`
+	ARQDataNackMaxGap              int     `toml:"ARQ_DATA_NACK_MAX_GAP"`
+	ARQDataNackInitialDelaySeconds float64 `toml:"ARQ_DATA_NACK_INITIAL_DELAY_SECONDS"`
+	ARQDataNackRepeatSeconds       float64 `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
+	ARQTerminalDrainTimeoutSec     float64 `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
+	ARQTerminalAckWaitTimeoutSec   float64 `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
 }
 
 type ServerConfigOverrides struct {
@@ -132,11 +137,16 @@ func defaultServerConfig() ServerConfig {
 	readers := min(max(runtime.NumCPU()/2, 1), 4)
 
 	return ServerConfig{
+		ConfigPreset:                      "default",
 		ProtocolType:                      "SOCKS5",
 		UDPHost:                           "0.0.0.0",
 		UDPPort:                           53,
 		TCPListenerEnabled:                true,
 		TCPMaxConns:                       2048,
+		TCPMaxConnsPerIP:                  128,
+		TCPMaxQueriesPerConn:              0,
+		TCPReadIdleTimeoutSeconds:         30.0,
+		TCPWriteTimeoutSeconds:            15.0,
 		UDPReaders:                        readers,
 		SocketBufferSize:                  8 * 1024 * 1024,
 		MaxConcurrentRequests:             16384,
@@ -225,12 +235,18 @@ func loadServerConfigFile(filename string) (ServerConfig, error) {
 		return cfg, fmt.Errorf("config file not found: %s", path)
 	}
 
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	meta, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
 	}
 
 	cfg.ConfigPath = path
 	cfg.ConfigDir = filepath.Dir(path)
+	if err := applyServerConfigPreset(&cfg, func(key string) bool {
+		return meta.IsDefined(key)
+	}); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -243,11 +259,24 @@ func LoadServerConfigWithOverrides(filename string, overrides ServerConfigOverri
 		if err := applyServerConfigOverrideValues(&cfg, overrides.Values); err != nil {
 			return cfg, err
 		}
+		if _, ok := overrides.Values["ConfigPreset"]; ok {
+			serverType := reflect.TypeOf(ServerConfig{})
+			if err := applyServerConfigPreset(&cfg, func(key string) bool {
+				return overrideValuesDefineTOMLKey(overrides.Values, serverType, key)
+			}); err != nil {
+				return cfg, err
+			}
+		}
 	}
 	return finalizeServerConfig(cfg)
 }
 
 func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
+	cfg.ConfigPreset = normalizeConfigPresetName(cfg.ConfigPreset)
+	if !isKnownConfigPreset(cfg.ConfigPreset) {
+		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: default, speed, survival, tcp-survival)", cfg.ConfigPreset)
+	}
+
 	cfg.ProtocolType = defaultString(strings.ToUpper(strings.TrimSpace(cfg.ProtocolType)), "SOCKS5")
 
 	switch cfg.ProtocolType {
@@ -263,6 +292,14 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	if cfg.UDPPort <= 0 || cfg.UDPPort > 65535 {
 		return cfg, fmt.Errorf("invalid UDP_PORT: %d", cfg.UDPPort)
 	}
+
+	cfg.TCPMaxConns = clampInt(defaultIntBelow(cfg.TCPMaxConns, 1, 2048), 1, 65535)
+	cfg.TCPMaxConnsPerIP = clampInt(defaultIntBelow(cfg.TCPMaxConnsPerIP, 0, 128), 0, cfg.TCPMaxConns)
+	if cfg.TCPMaxQueriesPerConn < 0 {
+		cfg.TCPMaxQueriesPerConn = 0
+	}
+	cfg.TCPReadIdleTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.TCPReadIdleTimeoutSeconds, 30.0), 1.0, 3600.0)
+	cfg.TCPWriteTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.TCPWriteTimeoutSeconds, 15.0), 1.0, 3600.0)
 
 	if cfg.UDPReaders <= 0 {
 		cfg.UDPReaders = defaultServerConfig().UDPReaders
@@ -469,6 +506,14 @@ func (c ServerConfig) Address() string {
 
 func (c ServerConfig) DropLogInterval() time.Duration {
 	return time.Duration(c.DropLogIntervalSecs * float64(time.Second))
+}
+
+func (c ServerConfig) TCPReadIdleTimeout() time.Duration {
+	return time.Duration(c.TCPReadIdleTimeoutSeconds * float64(time.Second))
+}
+
+func (c ServerConfig) TCPWriteTimeout() time.Duration {
+	return time.Duration(c.TCPWriteTimeoutSeconds * float64(time.Second))
 }
 
 func (c ServerConfig) InvalidCookieWindow() time.Duration {

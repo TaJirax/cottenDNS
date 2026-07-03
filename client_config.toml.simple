@@ -5,6 +5,11 @@
 # Profile below is biased toward lossy / high-latency links with many resolvers.
 # ==============================================================================
 
+# Optional built-in profile. Keep "default" here, or use one of the bundled
+# paired preset files: client_config.speed.toml, client_config.survival.toml,
+# client_config.tcp-survival.toml.
+# CONFIG_PRESET = "default"
+
 # ------------------------------------------------------------------------------
 # 1) Tunnel Identity & Security
 # What this section does:
@@ -167,6 +172,19 @@ RESOLVER_TRANSPORT = "auto"
 # avoids triggering resolver/IP rate-limit blocks. Default on.
 RESOLVER_RATE_LIMIT_ENABLED = true
 
+# DNS-injection hardening (client-only, NO server change; zero speed cost).
+# On restrictive networks a DPI box races a forged NXDOMAIN back to you while the
+# real authoritative answer still arrives — so the resolver stays usable, but the
+# client used to count that forgery as a failure, letting the censor throttle and
+# disable perfectly good resolvers for free (which is what actually slows you
+# down). When true (default), a NXDOMAIN carrying no tunnel payload is ignored as
+# injection noise: it never throttles or disables the resolver, and the pending
+# query is left open so the genuine answer is still scored as a success. Real
+# unreachability is still caught by the one signal injection cannot forge — the
+# query timing out with no real answer. Set false to restore the old behavior of
+# counting every NXDOMAIN as a failure.
+RESOLVER_IGNORE_INJECTED_NXDOMAIN = true
+
 # QNAME reshaping: target maximum DNS label length (1..63) when laying the tunnel
 # payload into the query name. 63 (default) packs the payload into the fewest,
 # longest labels for maximum capacity. A smaller value (e.g. 32) produces
@@ -175,6 +193,38 @@ RESOLVER_RATE_LIMIT_ENABLED = true
 # Server-transparent: the server reassembles the labels regardless of how they
 # are split, so this needs no server change and cannot desync.
 QNAME_LABEL_LENGTH = 63
+
+# ---- DNS query shaping (client-only, NO server change needed) -----------------
+# These make each outgoing DNS query look more like a real stub resolver's query
+# on the client->resolver leg (where restrictive-network DPI observes it). All
+# four are server-transparent: the server echoes the transaction ID without
+# validating it, lowercases the whole query name before decoding, and never even
+# sees the EDNS cookie (the recursive resolver strips it). You can toggle any of
+# them without touching or redeploying the server.
+
+# Randomize the DNS transaction ID per query instead of using a sequential
+# counter. A monotonically increasing ID to one zone is a tunnel tell (and a mild
+# spoofing weakness); real stub resolvers randomize it. Recommended on.
+DNS_RANDOMIZE_QUERY_ID = true
+
+# Add an RFC 7873 EDNS Client Cookie (8 random bytes) to each query's OPT record,
+# so the query looks like a modern stub. The recursive resolver terminates EDNS,
+# so this only affects the client->resolver leg and never reaches the server.
+# Recommended on.
+DNS_EDNS_COOKIE = true
+
+# DNS 0x20 mixed-case encoding: randomize the letter case of the query name. The
+# server lowercases the name before decoding, so it never desyncs. It makes the
+# all-lowercase base32 payload look less uniform, but does NOT reduce label
+# entropy, so the anti-detection benefit is modest. Opt-in; default off.
+DNS_QNAME_CASE_RANDOMIZATION = false
+
+# Requestor's UDP payload size advertised in the EDNS OPT record (bytes),
+# clamped to [512, 4096]. Larger lets resolvers return larger answers, which the
+# high download MTU needs for throughput; a smaller value (e.g. 1232) looks more
+# like a modern stub but can cap the answer size and hurt throughput. Keep 4096
+# unless you specifically need a smaller advertised buffer.
+EDNS_UDP_SIZE = 4096
 
 # ---- Packet duplication -------------------------------------------------------
 # All tunnel packets are sent by the client as DNS queries, so every

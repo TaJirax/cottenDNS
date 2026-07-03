@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -713,10 +713,11 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 // reports its measured loss. With MTU_PROBE_SAMPLES <= 1 it keeps the legacy
 // behavior (accept if any of mtuTestRetries attempts succeed; loss reported as
 // 0 on success, 1 on failure). With MTU_PROBE_SAMPLES > 1 it switches to
-// loss-aware probing: it sends that many independent probes and accepts the
-// candidate only if the observed loss fraction is at or below MTU_MAX_LOSS,
-// returning the actual measured loss so the caller can record the loss at the
-// chosen MTU edge.
+// loss-aware probing: it budgets that many independent probes and accepts the
+// candidate only if the observed failures stay within MTU_MAX_LOSS. Early-stop
+// probing keeps startup fast, while loss is still reported against the configured
+// sample budget so the UI does not collapse early rejects into a misleading
+// 100% loss.
 func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn func(int, bool) (bool, time.Duration, error)) (bool, time.Duration, float64) {
 	samples := c.cfg.MTUProbeSamples
 	if samples > 1 {
@@ -753,10 +754,7 @@ func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn fun
 			}
 		}
 		sampled := success + failed
-		loss := 0.0
-		if sampled > 0 {
-			loss = float64(failed) / float64(sampled)
-		}
+		loss := mtuProbeLossFraction(failed, samples)
 		var avgRTT time.Duration
 		if success > 0 {
 			avgRTT = sumRTT / time.Duration(success)
@@ -764,8 +762,8 @@ func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn fun
 		ok := failed <= allowedFail
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf(
-				"<cyan>[MTU]</cyan> Candidate %d bytes: loss≈%.0f%% (%d ok / %d sampled of %d), accept=%v (max=%.0f%%)",
-				value, loss*100, success, sampled, samples, ok, c.cfg.MTUMaxLoss*100,
+				"<cyan>[MTU]</cyan> Candidate %d bytes: loss≈%.1f%% (%d failed / %d budgeted, %d ok / %d sampled), accept=%v (max=%.0f%%)",
+				value, loss*100, failed, samples, success, sampled, ok, c.cfg.MTUMaxLoss*100,
 			)
 		}
 		return ok, avgRTT, loss
@@ -785,6 +783,16 @@ func (c *Client) evaluateMTUCandidate(ctx context.Context, value int, testFn fun
 		}
 	}
 	return false, 0, 1
+}
+
+func mtuProbeLossFraction(failed, sampleBudget int) float64 {
+	if failed <= 0 || sampleBudget <= 0 {
+		return 0
+	}
+	if failed >= sampleBudget {
+		return 1
+	}
+	return float64(failed) / float64(sampleBudget)
 }
 
 func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probeTransport queryExchanger, mtuSize int, options mtuProbeOptions) (bool, time.Duration, error) {

@@ -103,6 +103,12 @@ def main():
     print("Copying config files...")
     shutil.copy("client_config.toml.simple", dist_dir / "client_config.toml")
     shutil.copy("server_config.toml.simple", dist_dir / "server_config.toml")
+    for preset in Path(".").glob("client_config.*.toml"):
+        shutil.copy(preset, dist_dir / preset.name)
+    for preset in Path(".").glob("server_config.*.toml"):
+        shutil.copy(preset, dist_dir / preset.name)
+    if Path("CONFIG_PRESETS.md").exists():
+        shutil.copy("CONFIG_PRESETS.md", dist_dir / "CONFIG_PRESETS.md")
 
     print("Copying README files...")
     if Path("README.MD").exists():

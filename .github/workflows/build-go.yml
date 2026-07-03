@@ -339,6 +339,9 @@ jobs:
           cp client_config.toml.simple dist/client_config.toml || true
           cp client_resolvers.simple dist/client_resolvers.txt || true
           cp server_config.toml.simple dist/server_config.toml || true
+          cp client_config.*.toml dist/ || true
+          cp server_config.*.toml dist/ || true
+          cp CONFIG_PRESETS.md dist/ || true
           if [[ "${{ matrix.go_os }}" == "linux" ]]; then
             cp client_linux_install.sh dist/client_linux_install.sh || true
           fi
@@ -565,8 +568,8 @@ jobs:
             Rename-Item -Path $serverOrig -NewName $serverExeName -Force
           }
 
-          Compress-Archive -Path $clientExeName,"client_config.toml","client_resolvers.txt" -DestinationPath "${clientZipBase}.zip" -Force
-          Compress-Archive -Path $serverExeName,"server_config.toml" -DestinationPath "${serverZipBase}.zip" -Force
+          Compress-Archive -Path $clientExeName,"client_config.toml","client_resolvers.txt","client_config.*.toml","CONFIG_PRESETS.md" -DestinationPath "${clientZipBase}.zip" -Force
+          Compress-Archive -Path $serverExeName,"server_config.toml","server_config.*.toml","CONFIG_PRESETS.md" -DestinationPath "${serverZipBase}.zip" -Force
 
           if (Test-Path "README.html") {
             Compress-Archive -Path "README.html" -Update -DestinationPath "${clientZipBase}.zip"
@@ -622,14 +625,22 @@ jobs:
           SERVER_TOML="server_config.toml"
 
           CLIENT_FILES=( "${CLIENT_EXE_NAME}" "${CLIENT_TOML}" "${CLIENT_RESOLVERS}" )
+          CLIENT_PRESETS=( client_config.*.toml )
+          [ -e "${CLIENT_PRESETS[0]}" ] && CLIENT_FILES+=( "${CLIENT_PRESETS[@]}" )
+          [ -f "CONFIG_PRESETS.md" ] && CLIENT_FILES+=( "CONFIG_PRESETS.md" )
           [ -f "${CLIENT_README_EN}" ] && CLIENT_FILES+=( "${CLIENT_README_EN}" )
           [ -f "${CLIENT_README_FA}" ] && CLIENT_FILES+=( "${CLIENT_README_FA}" )
           [ -f "client_linux_install.sh" ] && CLIENT_FILES+=( "client_linux_install.sh" )
 
+          SERVER_FILES=( "${SERVER_EXE_NAME}" "${SERVER_TOML}" )
+          SERVER_PRESETS=( server_config.*.toml )
+          [ -e "${SERVER_PRESETS[0]}" ] && SERVER_FILES+=( "${SERVER_PRESETS[@]}" )
+          [ -f "CONFIG_PRESETS.md" ] && SERVER_FILES+=( "CONFIG_PRESETS.md" )
+
           zip -j "${CLIENT_ZIP}" "${CLIENT_FILES[@]}" || true
           tar -czf "${CLIENT_TAR}" "${CLIENT_FILES[@]}" || true
-          zip -j "${SERVER_ZIP}" "${SERVER_EXE_NAME}" "${SERVER_TOML}" || true
-          tar -czf "${SERVER_TAR}" "${SERVER_EXE_NAME}" "${SERVER_TOML}" || true
+          zip -j "${SERVER_ZIP}" "${SERVER_FILES[@]}" || true
+          tar -czf "${SERVER_TAR}" "${SERVER_FILES[@]}" || true
 
           sha256sum "${CLIENT_ZIP}" "${CLIENT_TAR}" "${SERVER_ZIP}" "${SERVER_TAR}" > SHA256SUMS.txt
 

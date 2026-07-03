@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -59,6 +59,80 @@ SUPPORTED_DOWNLOAD_COMPRESSION_TYPES = [0, 3]
 	}
 }
 
+func TestLoadServerConfigAppliesPresetAndPreservesExplicitValues(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "server_config.toml")
+
+	if err := os.WriteFile(configPath, []byte(`
+CONFIG_PRESET = "tcp_survival"
+PROTOCOL_TYPE = "SOCKS5"
+UDP_PORT = 53
+DOMAIN = ["v.domain.com"]
+TCP_MAX_CONNS_PER_IP = 64
+SUPPORTED_UPLOAD_COMPRESSION_TYPES = [0, 2]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+
+	cfg, err := LoadServerConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadServerConfig returned error: %v", err)
+	}
+
+	if cfg.ConfigPreset != "tcp-survival" {
+		t.Fatalf("unexpected preset: got=%q want=tcp-survival", cfg.ConfigPreset)
+	}
+	if !cfg.TCPListenerEnabled || cfg.TCPMaxConns != 4096 {
+		t.Fatalf("tcp-survival preset did not tune listener: enabled=%v max=%d", cfg.TCPListenerEnabled, cfg.TCPMaxConns)
+	}
+	if cfg.TCPMaxConnsPerIP != 64 {
+		t.Fatalf("explicit per-IP cap should win over preset, got %d", cfg.TCPMaxConnsPerIP)
+	}
+	if cfg.MaxPacketsPerBatch != 12 || cfg.ARQWindowSize != 3000 {
+		t.Fatalf("tcp-survival throughput settings not applied: batch=%d window=%d", cfg.MaxPacketsPerBatch, cfg.ARQWindowSize)
+	}
+	if len(cfg.SupportedUploadCompressionTypes) != 2 || cfg.SupportedUploadCompressionTypes[1] != 2 {
+		t.Fatalf("explicit upload compression list should win over preset: %+v", cfg.SupportedUploadCompressionTypes)
+	}
+	if !containsInt(cfg.SupportedDownloadCompressionTypes, 2) {
+		t.Fatalf("preset download compression should include LZ4: %+v", cfg.SupportedDownloadCompressionTypes)
+	}
+}
+
+func TestLoadServerConfigWithOverridesAppliesConfigPreset(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "server_config.toml")
+
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "SOCKS5"
+UDP_PORT = 53
+DOMAIN = ["v.domain.com"]
+TCP_MAX_CONNS_PER_IP = 64
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+
+	cfg, err := LoadServerConfigWithOverrides(configPath, ServerConfigOverrides{
+		Values: map[string]any{
+			"ConfigPreset":     "speed",
+			"TCPMaxConnsPerIP": 32,
+		},
+	})
+	if err != nil {
+		t.Fatalf("LoadServerConfigWithOverrides returned error: %v", err)
+	}
+
+	if cfg.ConfigPreset != "speed" {
+		t.Fatalf("unexpected preset: got=%q want=speed", cfg.ConfigPreset)
+	}
+	if cfg.TCPMaxConns != 4096 || cfg.MaxPacketsPerBatch != 12 {
+		t.Fatalf("speed preset not applied: tcpMax=%d batch=%d", cfg.TCPMaxConns, cfg.MaxPacketsPerBatch)
+	}
+	if cfg.TCPMaxConnsPerIP != 32 {
+		t.Fatalf("explicit override should win over preset, got %d", cfg.TCPMaxConnsPerIP)
+	}
+}
+
 func TestServerConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	binder, err := NewServerConfigFlagBinder(fs)
@@ -97,4 +171,13 @@ func TestServerConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
 	if _, exists := overrides.Values["UDPHost"]; exists {
 		t.Fatalf("did not expect unset flag to appear in overrides: %#v", overrides.Values["UDPHost"])
 	}
+}
+
+func containsInt(values []int, needle int) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

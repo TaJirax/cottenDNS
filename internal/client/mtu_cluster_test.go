@@ -233,12 +233,12 @@ func TestBalancingMTUWeighted_BiasesTowardLargerMTU(t *testing.T) {
 func TestResolverTierCounts_ThreeStates(t *testing.T) {
 	c := &Client{}
 	c.connections = []Connection{
-		{IsValid: true},                // active
-		{IsValid: true},                // active
-		{IsValid: true, Backup: true},  // reserve
-		{IsValid: false},               // invalid
-		{IsValid: false},               // invalid
-		{IsValid: false},               // invalid
+		{IsValid: true},               // active
+		{IsValid: true},               // active
+		{IsValid: true, Backup: true}, // reserve
+		{IsValid: false},              // invalid
+		{IsValid: false},              // invalid
+		{IsValid: false},              // invalid
 	}
 	active, reserve, invalid := c.resolverTierCounts()
 	if active != 2 || reserve != 1 || invalid != 3 {
@@ -304,8 +304,7 @@ func TestEvaluateMTUCandidate_LossAware(t *testing.T) {
 
 	// Fail the first 2 of 4 -> exceeds the 1-failure budget -> rejected. With
 	// coarse-then-refine the sampler stops as soon as the 2nd failure locks the
-	// reject, so only 2 probes are sent and the reported loss is approximate
-	// (failures / sampled), not the full-K 0.5.
+	// reject, but loss is still normalized against the configured sample budget.
 	calls = 0
 	ok, _, loss = c.evaluateMTUCandidate(context.Background(), 200, func(int, bool) (bool, time.Duration, error) {
 		calls++
@@ -317,8 +316,30 @@ func TestEvaluateMTUCandidate_LossAware(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("expected early-exit after 2 probes, got %d", calls)
 	}
-	if loss < 0.5 {
-		t.Errorf("approx loss = %.2f, want >= 0.5 on early reject", loss)
+	if loss != 0.5 {
+		t.Errorf("loss = %.2f, want 0.50 on early reject", loss)
+	}
+}
+
+func TestEvaluateMTUCandidate_EarlyRejectReportsBudgetedLoss(t *testing.T) {
+	// With a zero-loss budget, the first failure rejects the candidate. This used
+	// to report 100% because only one probe had been sampled; it should report
+	// one failure over the configured sample budget instead.
+	c := &Client{cfg: config.ClientConfig{MTUProbeSamples: 6, MTUMaxLoss: 0.0}}
+	calls := 0
+	ok, _, loss := c.evaluateMTUCandidate(context.Background(), 200, func(int, bool) (bool, time.Duration, error) {
+		calls++
+		return false, 0, errors.New("timeout")
+	})
+	if ok {
+		t.Fatal("expected reject after first failure with zero-loss budget")
+	}
+	if calls != 1 {
+		t.Fatalf("expected early reject after 1 probe, got %d", calls)
+	}
+	want := 1.0 / 6.0
+	if loss < want-0.0001 || loss > want+0.0001 {
+		t.Fatalf("loss = %.4f, want %.4f", loss, want)
 	}
 }
 

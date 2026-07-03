@@ -55,3 +55,35 @@ func TestShippedClientTemplateParses(t *testing.T) {
 		t.Fatalf("client_config.toml.simple failed before the key check (template is malformed): %v", err)
 	}
 }
+
+func TestBundledPresetTemplatesParse(t *testing.T) {
+	serverPresets := []string{
+		"server_config.speed.toml",
+		"server_config.survival.toml",
+		"server_config.tcp-survival.toml",
+	}
+	for _, name := range serverPresets {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LoadServerConfig(repoFile(name)); err != nil {
+				t.Fatalf("%s failed to load: %v", name, err)
+			}
+		})
+	}
+
+	clientPresets := []string{
+		"client_config.speed.toml",
+		"client_config.survival.toml",
+		"client_config.tcp-survival.toml",
+	}
+	for _, name := range clientPresets {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadClientConfig(repoFile(name))
+			if err == nil {
+				return
+			}
+			if !strings.Contains(err.Error(), "ENCRYPTION_KEY") {
+				t.Fatalf("%s failed before the key check (template is malformed): %v", name, err)
+			}
+		})
+	}
+}

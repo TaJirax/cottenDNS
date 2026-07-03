@@ -4,6 +4,11 @@
 # Comments below describe the real Go code paths, not the legacy Python server.
 # ==============================================================================
 
+# Optional built-in profile. Keep "default" here, or use one of the bundled
+# paired preset files: server_config.speed.toml, server_config.survival.toml,
+# server_config.tcp-survival.toml.
+# CONFIG_PRESET = "default"
+
 # ------------------------------------------------------------------------------
 # 1) Tunnel Policy
 # What this section does:
@@ -50,6 +55,14 @@ UDP_PORT = 53
 # concurrent TCP connections (0 = built-in default).
 TCP_LISTENER_ENABLED = true
 TCP_MAX_CONNS = 2048
+
+# TCP/53 survival-path guardrails. These protect the fallback listener from
+# connection floods and slow clients while keeping legitimate persistent
+# DNS-over-TCP connections useful. TCP_MAX_QUERIES_PER_CONN = 0 means unlimited.
+TCP_MAX_CONNS_PER_IP = 128
+TCP_MAX_QUERIES_PER_CONN = 0
+TCP_READ_IDLE_TIMEOUT_SECONDS = 30.0
+TCP_WRITE_TIMEOUT_SECONDS = 15.0
 
 # Number of UDP reader goroutines.
 # If <= 0, code falls back to an auto default.

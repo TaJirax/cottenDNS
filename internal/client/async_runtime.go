@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -567,7 +567,7 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 				var dnsPacket []byte
 				switch {
 				case firstDNSPacket == nil:
-					dnsPacket, err = buildTunnelTXTQuestionBytesPrepared(prepared, encoded, datagramQueryType)
+					dnsPacket, err = c.buildTunnelTXTQuestionBytesPrepared(prepared, encoded, datagramQueryType)
 					if err != nil {
 						continue
 					}
@@ -582,7 +582,7 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 					var cached bool
 					dnsPacket, cached = packetByDomain[domain]
 					if !cached {
-						dnsPacket, err = buildTunnelTXTQuestionBytesPrepared(prepared, encoded, datagramQueryType)
+						dnsPacket, err = c.buildTunnelTXTQuestionBytesPrepared(prepared, encoded, datagramQueryType)
 						if err != nil {
 							continue
 						}
@@ -756,6 +756,16 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
 		if errors.Is(err, DnsParser.ErrTXTAnswerMissing) {
 			receivedAt := time.Now()
 			if parsed, parseErr := DnsParser.ParsePacketLite(data); parseErr == nil && parsed.Header.RCode != 0 {
+				if c.rcodeIsInjectedNoise(parsed.Header.RCode) {
+					// On-path DNS poisoning: a forged NXDOMAIN raced the real
+					// answer. Ignore it WITHOUT consuming the pending query
+					// sample, so the genuine response can still be scored as a
+					// success (or time out if the resolver is truly dead). This
+					// stops the censor from throttling/disabling working
+					// resolvers — and their share of forged failures — for free.
+					c.noteInjectedResolverNoise(addr)
+					return
+				}
 				c.trackResolverFailure(data, addr, localAddr, receivedAt)
 			} else {
 				c.trackResolverSuccess(data, addr, localAddr, receivedAt)

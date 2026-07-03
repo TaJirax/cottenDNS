@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -49,8 +49,23 @@ func (c *Client) nextQueryType() uint16 {
 	return c.queryTypes[int(idx%uint32(len(c.queryTypes)))]
 }
 
-func buildTunnelTXTQuestionBytes(domain string, encoded []byte, qType uint16) ([]byte, error) {
-	return DnsParser.BuildTunnelTXTQuestionPacket(domain, encoded, qType, EDnsSafeUDPSize)
+// queryShaping snapshots the client's per-query DNS-shaping settings for the
+// wire builder. All fields are client-only and server-transparent.
+func (c *Client) queryShaping() DnsParser.QueryShaping {
+	return DnsParser.QueryShaping{
+		EDNSUDPSize:   c.ednsUDPSize,
+		RandomizeID:   c.dnsRandomizeID,
+		EDNSCookie:    c.dnsEDNSCookie,
+		CaseRandomize: c.dnsCaseRandomize,
+	}
+}
+
+func (c *Client) buildTunnelTXTQuestionBytes(domain string, encoded []byte, qType uint16) ([]byte, error) {
+	normalized, qname, err := DnsParser.PrepareTunnelDomainQname(domain)
+	if err != nil {
+		return nil, err
+	}
+	return DnsParser.BuildTunnelQuestionPacketShaped(normalized, qname, encoded, qType, c.queryShaping())
 }
 
 func prepareTunnelDomain(domain string) (preparedTunnelDomain, error) {
@@ -61,8 +76,8 @@ func prepareTunnelDomain(domain string) (preparedTunnelDomain, error) {
 	return preparedTunnelDomain{normalized: normalized, qname: qname}, nil
 }
 
-func buildTunnelTXTQuestionBytesPrepared(domain preparedTunnelDomain, encoded []byte, qType uint16) ([]byte, error) {
-	return DnsParser.BuildTunnelTXTQuestionPacketPrepared(domain.normalized, domain.qname, encoded, qType, EDnsSafeUDPSize)
+func (c *Client) buildTunnelTXTQuestionBytesPrepared(domain preparedTunnelDomain, encoded []byte, qType uint16) ([]byte, error) {
+	return DnsParser.BuildTunnelQuestionPacketShaped(domain.normalized, domain.qname, encoded, qType, c.queryShaping())
 }
 
 // buildTunnelTXTQueryRaw builds an encoded tunnel query using the provided options and codec.
@@ -75,7 +90,7 @@ func (c *Client) buildTunnelTXTQueryRaw(domain string, options VpnProto.BuildOpt
 	if err != nil {
 		return nil, err
 	}
-	return buildTunnelTXTQuestionBytes(domain, encoded, c.nextQueryType())
+	return c.buildTunnelTXTQuestionBytes(domain, encoded, c.nextQueryType())
 }
 
 func (c *Client) buildEncodedAutoWithCompressionTrace(options VpnProto.BuildOptions) ([]byte, error) {
@@ -96,5 +111,5 @@ func (c *Client) buildTunnelTXTQuery(domain string, options VpnProto.BuildOption
 	if err != nil {
 		return nil, err
 	}
-	return buildTunnelTXTQuestionBytes(domain, encoded, c.nextQueryType())
+	return c.buildTunnelTXTQuestionBytes(domain, encoded, c.nextQueryType())
 }

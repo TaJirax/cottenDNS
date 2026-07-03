@@ -1,0 +1,10 @@
+# CottenDNS paired preset: speed
+# Use with client_config.speed.toml.
+
+CONFIG_PRESET = "speed"
+
+# Your delegated tunnel domain(s), e.g. ["d.example.com"].
+DOMAIN = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+
+# Keep this file beside the server binary, or override with an absolute path.
+ENCRYPTION_KEY_FILE = "encrypt_key.txt"

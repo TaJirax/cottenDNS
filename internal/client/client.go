@@ -35,6 +35,17 @@ const (
 	EDnsSafeUDPSize = 4096
 )
 
+// resolveEDNSUDPSize maps the configured EDNS_UDP_SIZE to the wire value used in
+// the OPT record. A non-positive value (unset, e.g. a directly-constructed test
+// client) falls back to the historical default so the OPT record is always
+// present. Config finalization already clamps loaded values to [512, 4096].
+func resolveEDNSUDPSize(configured int) uint16 {
+	if configured <= 0 {
+		return EDnsSafeUDPSize
+	}
+	return uint16(configured)
+}
+
 type Client struct {
 	cfg      config.ClientConfig
 	log      *logger.Logger
@@ -60,10 +71,10 @@ type Client struct {
 	recheckConnectionFn func(conn *Connection) bool
 
 	// MTU States
-	syncedUploadMTU     int
-	syncedDownloadMTU   int
-	syncedUploadChars   int
-	safeUploadMTU       int
+	syncedUploadMTU   int
+	syncedDownloadMTU int
+	syncedUploadChars int
+	safeUploadMTU     int
 	// mtuGroups holds the resolver clusters from the last MTU scan (Layer 2 of
 	// the adaptive per-group MTU strategy). Informational today: it is computed
 	// and logged but does not yet drive routing or per-group MTU selection.
@@ -77,6 +88,14 @@ type Client struct {
 	// selection across it. A single-element set means "always that type".
 	queryTypes      []uint16
 	queryTypeCursor atomic.Uint32
+
+	// DNS query-shaping knobs (client-only, server-transparent). See the matching
+	// config keys DNS_RANDOMIZE_QUERY_ID / DNS_EDNS_COOKIE /
+	// DNS_QNAME_CASE_RANDOMIZATION / EDNS_UDP_SIZE.
+	ednsUDPSize      uint16
+	dnsRandomizeID   bool
+	dnsEDNSCookie    bool
+	dnsCaseRandomize bool
 
 	// dupPreferDistinctDomains enables A6 domain-diverse packet duplication.
 	dupPreferDistinctDomains              bool
@@ -112,6 +131,10 @@ type Client struct {
 	sessionResetSignal  chan struct{}
 	rxDroppedPackets    atomic.Uint64
 	lastRXDropLogUnix   atomic.Int64
+	// injectedNXDOMAINCount counts forged NXDOMAIN responses ignored as on-path
+	// DNS poisoning (see RESOLVER_IGNORE_INJECTED_NXDOMAIN). Purely observational.
+	injectedNXDOMAINCount atomic.Uint64
+	lastInjectionLogUnix  atomic.Int64
 
 	// Traffic byte counters (per-session, reset on resetRuntimeBindings)
 	txTotalBytes atomic.Uint64
@@ -376,6 +399,10 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		mtuCryptoOverhead:        mtuCryptoOverhead(cfg.DataEncryptionMethod),
 		maxPackedBlocks:          1,
 		queryTypes:               normalizeRuntimeQueryTypes(cfg.QueryTypeCodes),
+		ednsUDPSize:              resolveEDNSUDPSize(cfg.EDNSUDPSize),
+		dnsRandomizeID:           cfg.DNSRandomizeQueryID,
+		dnsEDNSCookie:            cfg.DNSEDNSCookie,
+		dnsCaseRandomize:         cfg.DNSQNameCaseRandomization,
 		dupPreferDistinctDomains: cfg.DuplicationPreferDistinctDomains,
 		responseMode:             responseMode,
 		connectionsByKey:         make(map[string]int, len(cfg.Domains)*len(cfg.Resolvers)),

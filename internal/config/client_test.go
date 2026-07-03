@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/cottenpickDNS
@@ -181,6 +181,51 @@ ENCRYPTION_KEY = "secret"
 	}
 	if cfg.ProtocolType != "TCP" {
 		t.Fatal("tcp mode should be loaded")
+	}
+}
+
+func TestLoadClientConfigAppliesPresetAndPreservesExplicitValues(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "client_config.toml")
+	resolversPath := filepath.Join(dir, "client_resolvers.txt")
+
+	if err := os.WriteFile(configPath, []byte(`
+CONFIG_PRESET = "speed"
+PROTOCOL_TYPE = "SOCKS5"
+DOMAINS = ["v.domain.com"]
+ENCRYPTION_KEY = "secret"
+UPLOAD_PACKET_DUPLICATION_COUNT = 2
+QUERY_TYPES = ["TXT"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(resolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile resolvers failed: %v", err)
+	}
+
+	cfg, err := LoadClientConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadClientConfig returned error: %v", err)
+	}
+
+	if cfg.ConfigPreset != "speed" {
+		t.Fatalf("unexpected preset: got=%q want=speed", cfg.ConfigPreset)
+	}
+	if cfg.ResolverBalancingStrategy != 5 || cfg.ResolverTransport != "auto" {
+		t.Fatalf("speed preset did not apply path selection: strategy=%d transport=%q", cfg.ResolverBalancingStrategy, cfg.ResolverTransport)
+	}
+	if cfg.UploadPacketDuplicationCount != 2 {
+		t.Fatalf("explicit upload duplication should win over preset, got %d", cfg.UploadPacketDuplicationCount)
+	}
+	if cfg.DownloadPacketDuplicationCount != 3 {
+		t.Fatalf("speed preset download duplication = %d, want 3", cfg.DownloadPacketDuplicationCount)
+	}
+	if !cfg.AdaptiveDuplication || cfg.MTUProbeSamples != 4 || cfg.MTUMaxLoss != 0.25 {
+		t.Fatalf("speed preset loss controls not applied: adaptive=%v samples=%d maxLoss=%v", cfg.AdaptiveDuplication, cfg.MTUProbeSamples, cfg.MTUMaxLoss)
+	}
+	if len(cfg.QueryTypes) != 1 || cfg.QueryTypes[0] != "TXT" {
+		t.Fatalf("explicit query types should win over preset, got %+v", cfg.QueryTypes)
 	}
 }
 
@@ -372,6 +417,46 @@ MAX_DOWNLOAD_MTU = 140
 	}
 	if cfg.MinUploadMTU != minUp || cfg.MaxUploadMTU != maxUp || cfg.MinDownloadMTU != minDown || cfg.MaxDownloadMTU != maxDown {
 		t.Fatalf("unexpected overridden MTU range: up=%d..%d down=%d..%d", cfg.MinUploadMTU, cfg.MaxUploadMTU, cfg.MinDownloadMTU, cfg.MaxDownloadMTU)
+	}
+}
+
+func TestLoadClientConfigWithOverridesAppliesConfigPreset(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "client_config.toml")
+	resolversPath := filepath.Join(dir, "client_resolvers.txt")
+
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "SOCKS5"
+DOMAINS = ["v.domain.com"]
+DATA_ENCRYPTION_METHOD = 1
+ENCRYPTION_KEY = "secret"
+RESOLVER_TRANSPORT = "auto"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(resolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile resolvers failed: %v", err)
+	}
+
+	cfg, err := LoadClientConfigWithOverrides(configPath, ClientConfigOverrides{
+		Values: map[string]any{
+			"ConfigPreset":                 "tcp",
+			"UploadPacketDuplicationCount": 2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("LoadClientConfigWithOverrides returned error: %v", err)
+	}
+
+	if cfg.ConfigPreset != "tcp-survival" || cfg.ResolverTransport != "tcp" {
+		t.Fatalf("tcp preset override not applied: preset=%q transport=%q", cfg.ConfigPreset, cfg.ResolverTransport)
+	}
+	if cfg.UploadPacketDuplicationCount != 2 {
+		t.Fatalf("explicit override should win over preset, got %d", cfg.UploadPacketDuplicationCount)
+	}
+	if cfg.DownloadPacketDuplicationCount != 2 {
+		t.Fatalf("tcp preset download duplication = %d, want 2", cfg.DownloadPacketDuplicationCount)
 	}
 }
 

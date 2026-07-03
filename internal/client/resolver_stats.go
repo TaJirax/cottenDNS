@@ -5,13 +5,61 @@ import (
 	"net"
 	"sort"
 	"time"
+
+	Enums "cottendns-go/internal/enums"
 )
 
 const (
 	resolverPendingSoftCap   = 8192
 	resolverPendingHardCap   = 12288
 	resolverPendingTargetCap = 8192
+
+	// injectionLogInterval throttles the "ignored forged NXDOMAIN" warning so a
+	// heavy injection campaign cannot flood the log.
+	injectionLogInterval = 10 * time.Second
 )
+
+// rcodeIsInjectedNoise reports whether a non-zero DNS RCODE on a tunnel response
+// should be treated as on-path injection noise rather than a genuine resolver
+// failure (see RESOLVER_IGNORE_INJECTED_NXDOMAIN). NXDOMAIN is the reliable tell:
+// the authoritative tunnel server never returns it for a valid tunnel query, and
+// a genuinely overloaded recursor returns SERVFAIL/REFUSED, not NXDOMAIN — so a
+// NXDOMAIN carrying no tunnel payload is almost certainly a forged answer raced
+// in by an on-path censor. Genuine unreachability is still caught by the pending
+// sample timing out, which injection cannot forge.
+func (c *Client) rcodeIsInjectedNoise(rcode uint8) bool {
+	if c == nil || !c.cfg.ResolverIgnoreInjectedNXDOMAIN {
+		return false
+	}
+	return rcode == Enums.DNSR_CODE_NAME_ERROR
+}
+
+// noteInjectedResolverNoise records that a forged NXDOMAIN was ignored. The
+// caller deliberately does NOT consume the pending query sample, so the genuine
+// answer can still be scored as a success (or the sample times out if the
+// resolver is truly unreachable). A throttled warning lets the operator see that
+// DNS poisoning is happening and being absorbed.
+func (c *Client) noteInjectedResolverNoise(addr *net.UDPAddr) {
+	if c == nil {
+		return
+	}
+	total := c.injectedNXDOMAINCount.Add(1)
+	now := time.Now().UnixNano()
+	last := c.lastInjectionLogUnix.Load()
+	if now-last < injectionLogInterval.Nanoseconds() {
+		return
+	}
+	if !c.lastInjectionLogUnix.CompareAndSwap(last, now) {
+		return
+	}
+	if c.log != nil {
+		c.log.Warnf(
+			"\U0001F9EA <yellow>Ignored forged NXDOMAIN (DNS injection)</yellow> <magenta>|</magenta> <blue>Total</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Resolver</blue>: <cyan>%v</cyan> <magenta>|</magenta> <green>resolver kept active</green>",
+			total,
+			addr,
+		)
+	}
+}
 
 type resolverSampleKey struct {
 	resolverAddr string
