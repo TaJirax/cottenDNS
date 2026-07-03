@@ -2,7 +2,7 @@
   <img src="assets/cottendns.png" alt="CottenDns logo" width="160">
 </p>
 
-<h1 align="center">⚡ CottenDns</h1>
+<h1 align="center">CottenDns</h1>
 
 <p align="center">
   <strong>A DNS-based TCP tunnel for censored, lossy, high-latency networks.</strong>
