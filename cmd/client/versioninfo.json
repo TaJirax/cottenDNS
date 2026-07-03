@@ -19,15 +19,15 @@
         "FileSubtype": "00"
     },
     "StringFileInfo": {
-        "Comments": "CottenDNS Client",
+        "Comments": "CottenDns Client",
         "CompanyName": "tajirax",
-        "FileDescription": "CottenDNS Client",
+        "FileDescription": "CottenDns Client",
         "FileVersion": "1.0.0.0",
-        "InternalName": "CottenDNS_Client",
+        "InternalName": "CottenDns_Client",
         "LegalCopyright": "Copyright (c) 2026 tajirax",
         "LegalTrademarks": "",
-        "OriginalFilename": "CottenDNS_Client.exe",
-        "ProductName": "CottenDNS",
+        "OriginalFilename": "CottenDns_Client.exe",
+        "ProductName": "CottenDns",
         "ProductVersion": "1.0.0.0"
     },
     "VarFileInfo": {

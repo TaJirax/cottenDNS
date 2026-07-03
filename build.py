@@ -82,7 +82,7 @@ def main():
     
     for t in targets:
         for component in ["client", "server"]:
-            output_name = f"dist/CottenpickDNS_{component.capitalize()}_{t['platform']}_{t['arch']}{t['ext']}"
+            output_name = f"dist/CottenDns_{component.capitalize()}_{t['platform']}_{t['arch']}{t['ext']}"
             result = build(
                 t["os"],
                 t["arch"],
@@ -109,6 +109,8 @@ def main():
         shutil.copy(preset, dist_dir / preset.name)
     if Path("CONFIG_PRESETS.md").exists():
         shutil.copy("CONFIG_PRESETS.md", dist_dir / "CONFIG_PRESETS.md")
+    if Path("assets/cottendns.png").exists():
+        shutil.copy("assets/cottendns.png", dist_dir / "cottendns.png")
 
     print("Copying README files...")
     if Path("README.MD").exists():

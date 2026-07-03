@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# CottenDNS Client Linux Installer
+# CottenDns Client Linux Installer
 #
 # Run this script from the directory where the release archive was extracted.
-# It installs the CottenDNS client as a systemd service so it starts on boot.
+# It installs the CottenDns client as a systemd service so it starts on boot.
 # No internet access is required; all files are taken from the current directory.
 #
 # Usage:
@@ -50,14 +50,14 @@ log_info "Installation directory: $INSTALL_DIR"
 cd "$INSTALL_DIR" || log_error "Cannot access install directory: $INSTALL_DIR"
 
 echo -e "${MAGENTA}${BOLD}"
-echo -e "          CottenDNS Client Auto-Installer${NC}"
+echo -e "          CottenDns Client Auto-Installer${NC}"
 echo -e "${CYAN}------------------------------------------------------${NC}"
 
 require_cmd systemctl
 
-stop_existing_cottenpickdns_client_service() {
+stop_existing_CottenDns_client_service() {
   if systemctl list-unit-files --all 2>/dev/null | grep -q '^cottenpickdns-client\.service'; then
-    log_info "Stopping existing CottenDNS client service..."
+    log_info "Stopping existing CottenDns client service..."
     systemctl stop cottenpickdns-client 2>/dev/null || true
 
     for _ in 1 2 3 4 5; do
@@ -80,16 +80,16 @@ stop_existing_cottenpickdns_client_service() {
   fi
 }
 
-log_header "Stopping Existing CottenDNS Client"
-stop_existing_cottenpickdns_client_service
+log_header "Stopping Existing CottenDns Client"
+stop_existing_CottenDns_client_service
 
 log_header "Locating Client Binary"
 # The installer is bundled inside the release archive alongside the binary.
-# Find the most recently modified CottenDNS_Client_* file in the current directory.
+# Find the most recently modified CottenDns_Client_* file in the current directory.
 shopt -s nullglob
-client_bins=(CottenDNS_Client_*)
+client_bins=(CottenDns_Client_* CottenDNS_Client_*)
 shopt -u nullglob
-[[ ${#client_bins[@]} -eq 0 ]] && log_error "No CottenDNS_Client_* binary found in $INSTALL_DIR. Run this script from the extracted release directory."
+[[ ${#client_bins[@]} -eq 0 ]] && log_error "No CottenDns_Client_* binary found in $INSTALL_DIR. Run this script from the extracted release directory."
 EXECUTABLE="${client_bins[0]}"
 log_info "Found binary: $EXECUTABLE"
 chmod +x "$EXECUTABLE"
@@ -133,7 +133,7 @@ log_header "Installing System Service"
 SVC="/etc/systemd/system/cottenpickdns-client.service"
 cat > "$SVC" <<EOF
 [Unit]
-Description=CottenDNS Client
+Description=CottenDns Client
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
@@ -166,7 +166,7 @@ if ! systemctl is-active --quiet cottenpickdns-client; then
   log_error "Service failed to start. See logs above."
 fi
 
-log_success "CottenDNS client service is running."
+log_success "CottenDns client service is running."
 
 echo -e "\n${CYAN}======================================================${NC}"
 echo -e " ${GREEN}${BOLD}       INSTALLATION COMPLETED SUCCESSFULLY!${NC}"

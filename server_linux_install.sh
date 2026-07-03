@@ -62,7 +62,7 @@ select_release_artifact() {
   local base_url
   if [[ -n "$version" ]]; then
     base_url="https://github.com/TaJirax/cottenpickDNS/releases/download/${version}"
-    log_info "Targeting CottenDNS release: ${version}"
+    log_info "Targeting CottenDns release: ${version}"
   else
     base_url="https://github.com/TaJirax/cottenpickDNS/releases/latest/download"
   fi
@@ -70,23 +70,23 @@ select_release_artifact() {
   case "$arch" in
     aarch64|arm64)
       if [[ $legacy -eq 1 ]]; then
-        PREFIX="CottenDNS_Server_Linux-Legacy_ARM64"
+        PREFIX="CottenDns_Server_Linux-Legacy_ARM64"
       else
-        PREFIX="CottenDNS_Server_Linux_ARM64"
+        PREFIX="CottenDns_Server_Linux_ARM64"
       fi
       ;;
     armv7l|armv7|armhf)
-      PREFIX="CottenDNS_Server_Linux_ARMV7"
+      PREFIX="CottenDns_Server_Linux_ARMV7"
       ;;
     x86_64|amd64)
       if [[ $legacy -eq 1 ]]; then
-        PREFIX="CottenDNS_Server_Linux-Legacy_AMD64"
+        PREFIX="CottenDns_Server_Linux-Legacy_AMD64"
       else
-        PREFIX="CottenDNS_Server_Linux_AMD64"
+        PREFIX="CottenDns_Server_Linux_AMD64"
       fi
       ;;
     i386|i486|i586|i686|x86)
-      PREFIX="CottenDNS_Server_Linux_X86"
+      PREFIX="CottenDns_Server_Linux_X86"
       ;;
     *)
       log_error "Unsupported architecture: $arch"
@@ -112,7 +112,7 @@ find_local_server_binary() {
   for sd in "${search_dirs[@]}"; do
     [[ -d "$sd" ]] || continue
     local found
-    found="$(find "$sd" -maxdepth 1 -name "CottenDNS_Server_Linux*" -type f 2>/dev/null | grep -E "$pat" | xargs ls -t 2>/dev/null | head -n1)"
+    found="$(find "$sd" -maxdepth 1 \( -name "CottenDns_Server_Linux*" -o -name "CottenDNS_Server_Linux*" \) -type f 2>/dev/null | grep -E "$pat" | xargs ls -t 2>/dev/null | head -n1)"
     if [[ -n "$found" ]]; then
       echo "$found"
       return 0
@@ -142,18 +142,18 @@ find_local_config() {
 
 print_usage() {
   cat <<'USAGE'
-CottenDNS Server Linux Installer
+CottenDns Server Linux Installer
 
 Usage:
   bash <(curl -Ls https://raw.githubusercontent.com/TaJirax/cottenpickDNS/main/server_linux_install.sh) [OPTIONS]
 
 Options:
-  -v, --version <VERSION>   Install a specific CottenDNS release (tag), e.g. v1.2.3.
+  -v, --version <VERSION>   Install a specific CottenDns release (tag), e.g. v1.2.3.
                             If omitted, the latest release is installed.
   -l, --local               Local/offline install: use the server binary and
                             config found in the current directory (or dist/).
                             No download from GitHub is performed.
-  -u, --uninstall           Uninstall CottenDNS: stop and remove the systemd
+  -u, --uninstall           Uninstall CottenDns: stop and remove the systemd
                             service, drop kernel/limit tunings, and clean up
                             binaries and config files in the install directory.
   -h, --help                Show this help message and exit.
@@ -169,7 +169,7 @@ Examples:
   python build.py
   sudo bash server_linux_install.sh --local
 
-  # Uninstall CottenDNS:
+  # Uninstall CottenDns:
   bash <(curl -Ls https://raw.githubusercontent.com/TaJirax/cottenpickDNS/main/server_linux_install.sh) --uninstall
 USAGE
 }
@@ -248,16 +248,16 @@ fi
 
 echo -e "${MAGENTA}${BOLD}"
 if [[ "$ACTION" == "uninstall" ]]; then
-  echo -e "          CottenDNS Server Auto-Uninstaller${NC}"
+  echo -e "          CottenDns Server Auto-Uninstaller${NC}"
 elif [[ "$LOCAL_MODE" -eq 1 ]]; then
-  echo -e "          CottenDNS Server Local-Installer${NC}"
+  echo -e "          CottenDns Server Local-Installer${NC}"
 else
-  echo -e "           CottenDNS Server Auto-Installer${NC}"
+  echo -e "           CottenDns Server Auto-Installer${NC}"
 fi
 echo -e "${CYAN}------------------------------------------------------${NC}"
 
 do_uninstall() {
-  log_header "Uninstalling CottenDNS"
+  log_header "Uninstalling CottenDns"
 
   if systemctl list-unit-files --all 2>/dev/null | grep -q '^cottenpickdns\.service'; then
     log_info "Stopping and disabling cottenpickdns service..."
@@ -293,7 +293,7 @@ do_uninstall() {
     [[ -z "$pid" ]] && continue
     cmdline="$(ps -p "$pid" -o cmd= 2>/dev/null || true)"
     if echo "$cmdline" | grep -qiE 'cottenpickdns'; then
-      log_warn "Terminating stray CottenDNS process (PID: $pid)..."
+      log_warn "Terminating stray CottenDns process (PID: $pid)..."
       kill "$pid" 2>/dev/null || true
       sleep 1
       if kill -0 "$pid" 2>/dev/null; then
@@ -328,6 +328,7 @@ do_uninstall() {
   shopt -s nullglob
   local removed=0
   for f in \
+    "$INSTALL_DIR"/CottenDns_Server_Linux* \
     "$INSTALL_DIR"/CottenDNS_Server_Linux* \
     "$INSTALL_DIR"/server_config.toml \
     "$INSTALL_DIR"/server_config.toml.backup \
@@ -344,7 +345,7 @@ do_uninstall() {
   done
   shopt -u nullglob
   if [[ $removed -eq 0 ]]; then
-    log_warn "No CottenDNS files found in $INSTALL_DIR. If you installed elsewhere, run the uninstaller from that directory."
+    log_warn "No CottenDns files found in $INSTALL_DIR. If you installed elsewhere, run the uninstaller from that directory."
   fi
 
   echo -e "\n${CYAN}======================================================${NC}"
@@ -541,11 +542,11 @@ remove_port53_forward_rules() {
   remove_nft_port53_redirects
 }
 
-stop_existing_cottenpickdns_service() {
+stop_existing_CottenDns_service() {
   local unit_present=0
   if systemctl list-unit-files --all 2>/dev/null | grep -q '^cottenpickdns\.service'; then
     unit_present=1
-    log_info "Stopping existing CottenDNS service..."
+    log_info "Stopping existing CottenDns service..."
     systemctl stop cottenpickdns 2>/dev/null || true
 
     for _ in 1 2 3 4 5; do
@@ -570,9 +571,9 @@ stop_existing_cottenpickdns_service() {
   while IFS= read -r pid; do
     [[ -z "$pid" ]] && continue
     cmdline="$(ps -p "$pid" -o cmd= 2>/dev/null || true)"
-    if echo "$cmdline" | grep -qiE 'cottenpickdns|cottenpickdns_server'; then
+    if echo "$cmdline" | grep -qiE 'cottenpickdns|CottenDns[_-]?[Ss]erver|CottenDNS[_-]?[Ss]erver'; then
       if [[ $killed -eq 0 && $unit_present -eq 0 ]]; then
-        log_info "Stopping existing CottenDNS process that was started outside systemd..."
+        log_info "Stopping existing CottenDns process that was started outside systemd..."
       fi
       terminate_port53_pid "$pid" || true
       killed=1
@@ -580,8 +581,8 @@ stop_existing_cottenpickdns_service() {
   done <<< "$(get_port53_pids)"
 }
 
-log_header "Stopping Existing CottenDNS"
-stop_existing_cottenpickdns_service
+log_header "Stopping Existing CottenDns"
+stop_existing_CottenDns_service
 
 log_header "Managing Network Ports (Port 53)"
 remove_port53_forward_rules
@@ -685,7 +686,7 @@ log_info "Detected firewall handling: ${ACTIVE_FIREWALL}"
 
 log_header "Tuning Kernel & Limits"
 cat > /etc/sysctl.d/99-cottenpickdns.conf <<'EOF'
-# CottenDNS high-load tuning
+# CottenDns high-load tuning
 fs.file-max = 2097152
 fs.nr_open = 2097152
 net.core.somaxconn = 65535
@@ -706,7 +707,7 @@ EOF
 sysctl --system >/dev/null 2>&1 || log_warn "Could not fully apply sysctl settings."
 
 cat > /etc/sysctl.d/99-cottenpickdns-tuning.conf <<'EOF'
-# CottenDNS performance tuning (supplementary)
+# CottenDns performance tuning (supplementary)
 fs.file-max = 2097152
 fs.nr_open = 2097152
 net.core.rmem_max = 33554432
@@ -732,7 +733,7 @@ if [[ "$LOCAL_MODE" -eq 1 ]]; then
   ARCH="$(uname -m)"
 
   LOCAL_BIN="$(find_local_server_binary "$ARCH")"
-  [[ -z "$LOCAL_BIN" ]] && log_error "No CottenDNS server binary found. Run 'python build.py' first."
+  [[ -z "$LOCAL_BIN" ]] && log_error "No CottenDns server binary found. Run 'python build.py' first."
   log_info "Found binary: $LOCAL_BIN"
 
   LOCAL_BIN_DIR="$(dirname "$LOCAL_BIN")"
@@ -773,8 +774,8 @@ else
   log_info "Downloading server binaries..."
   require_cmd curl
   require_cmd unzip
-  if ! DOWNLOAD_DIR="$(mktemp -d /tmp/cottenpickdns_download.XXXXXX 2>/dev/null)"; then
-    DOWNLOAD_DIR="$(mktemp -d "$INSTALL_DIR/cottenpickdns_download.XXXXXX" 2>/dev/null || true)"
+  if ! DOWNLOAD_DIR="$(mktemp -d /tmp/CottenDns_download.XXXXXX 2>/dev/null)"; then
+    DOWNLOAD_DIR="$(mktemp -d "$INSTALL_DIR/CottenDns_download.XXXXXX" 2>/dev/null || true)"
   fi
   [[ -n "${DOWNLOAD_DIR:-}" && -d "${DOWNLOAD_DIR:-}" ]] || log_error "Failed to create temporary download directory. Check free space and /tmp permissions."
   ZIP_PATH="${DOWNLOAD_DIR}/server.zip"
@@ -875,7 +876,7 @@ chmod +x /usr/local/sbin/cottenpickdns-egress-filter.sh
 
 cat > /etc/systemd/system/cottenpickdns-egress-filter.service <<'SERVICE'
 [Unit]
-Description=CottenDNS egress filter - reject outbound TCP/53
+Description=CottenDns egress filter - reject outbound TCP/53
 After=network.target
 Before=cottenpickdns.service
 
@@ -894,7 +895,7 @@ log_header "Installing System Service"
 SVC="/etc/systemd/system/cottenpickdns.service"
 cat > "$SVC" <<EOF
 [Unit]
-Description=CottenDNS Server
+Description=CottenDns Server
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
@@ -946,11 +947,11 @@ if ! systemctl is-active --quiet cottenpickdns; then
   log_error "Service failed to start. See logs above."
 fi
 
-log_success "CottenDNS service is running."
+log_success "CottenDns service is running."
 
 log_info "Cleaning up old server binaries..."
 shopt -s nullglob
-for old_bin in "$INSTALL_DIR"/CottenDNS_Server_Linux*; do
+for old_bin in "$INSTALL_DIR"/CottenDns_Server_Linux* "$INSTALL_DIR"/CottenDNS_Server_Linux*; do
   [[ "$(basename "$old_bin")" == "$EXECUTABLE" ]] && continue
   rm -f -- "$old_bin"
   log_info "Removed old binary: $(basename "$old_bin")"

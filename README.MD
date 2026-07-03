@@ -1,4 +1,8 @@
-<h1 align="center">⚡ CottenDNS</h1>
+<p align="center">
+  <img src="assets/cottendns.png" alt="CottenDns logo" width="160">
+</p>
+
+<h1 align="center">⚡ CottenDns</h1>
 
 <p align="center">
   <strong>A DNS-based TCP tunnel for censored, lossy, high-latency networks.</strong>
@@ -18,14 +22,14 @@
   <a href="https://t.me/whitedns">Telegram Channel</a>
 </p>
 
-CottenDNS is a client/server tunneling system that moves TCP traffic through DNS queries and DNS responses. The client runs on the user's device and exposes a local SOCKS5 proxy or a raw TCP listener. Applications connect to that local listener like they would connect to any normal proxy. CottenDNS then splits each stream into small DNS-safe packets, applies optional compression and encryption, sends packets through one or more DNS resolvers, and reconstructs the stream on the remote CottenDNS server. The server finally opens the real outbound connection directly, through an optional upstream SOCKS5 proxy, or to a fixed TCP target depending on configuration.
+CottenDns is a client/server tunneling system that moves TCP traffic through DNS queries and DNS responses. The client runs on the user's device and exposes a local SOCKS5 proxy or a raw TCP listener. Applications connect to that local listener like they would connect to any normal proxy. CottenDns then splits each stream into small DNS-safe packets, applies optional compression and encryption, sends packets through one or more DNS resolvers, and reconstructs the stream on the remote CottenDns server. The server finally opens the real outbound connection directly, through an optional upstream SOCKS5 proxy, or to a fixed TCP target depending on configuration.
 
-The project is built for networks where common circumvention protocols are blocked, throttled, actively probed, or unreliable, but DNS traffic still has a usable path. This includes environments with small resolver payload limits, high latency, unstable resolver behavior, weak upload bandwidth, aggressive rate limits, and frequent packet loss. CottenDNS treats those problems as normal operating conditions: it uses MTU discovery, resolver health checks, multi-resolver balancing, packet duplication, ARQ retransmission, ACK/NACK handling, packet packing, and log-based startup to keep the tunnel usable when the network is hostile.
+The project is built for networks where common circumvention protocols are blocked, throttled, actively probed, or unreliable, but DNS traffic still has a usable path. This includes environments with small resolver payload limits, high latency, unstable resolver behavior, weak upload bandwidth, aggressive rate limits, and frequent packet loss. CottenDns treats those problems as normal operating conditions: it uses MTU discovery, resolver health checks, multi-resolver balancing, packet duplication, ARQ retransmission, ACK/NACK handling, packet packing, and log-based startup to keep the tunnel usable when the network is hostile.
 
 Typical deployment is straightforward: run the server on a VPS with UDP/53 reachable, delegate a short DNS subdomain to that server, put the generated encryption key and domain into the client config, add working resolvers, then point your browser or application at the local SOCKS5 listener. Advanced deployments can enable tunneled DNS handling, tune resolver/MTU behavior, chain server egress through another SOCKS5 proxy, or run the client as a Linux service.
 
 > [!NOTE]
-> DNS tunneling is constrained by resolver payload size, latency, rate limits, and packet loss. CottenDNS is built for usable connectivity under pressure, not for unrealistic benchmark-only claims or replacing a normal VPN on clean, high-bandwidth networks.
+> DNS tunneling is constrained by resolver payload size, latency, rate limits, and packet loss. CottenDns is built for usable connectivity under pressure, not for unrealistic benchmark-only claims or replacing a normal VPN on clean, high-bandwidth networks.
 
 ## 🆕 What's New
 
@@ -60,7 +64,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 
 ## 🎯 Built For Hostile Networks
 
-| Network Reality | CottenDNS Response |
+| Network Reality | CottenDns Response |
 | --- | --- |
 | 📏 DNS payloads are small | Low protocol overhead, DNS-safe encoding, active MTU discovery |
 | 📉 Packet loss is normal | ARQ windows, ACK/NACK, retransmission timers, terminal drain handling, and optional/auto download-path Reed-Solomon FEC |
@@ -97,7 +101,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 | `cmd/server` | Server executable entrypoint |
 | `internal/client` | Client runtime, SOCKS/TCP listeners, resolver balancing, MTU, sessions |
 | `internal/udpserver` | Server runtime, DNS ingress, sessions, streams, deferred workers |
-| `internal/vpnproto` | CottenDNS packet building, parsing, payloads, control packing |
+| `internal/vpnproto` | CottenDns packet building, parsing, payloads, control packing |
 | `internal/arq` | Reliability window, retransmission, ACK/NACK logic |
 | `internal/security` | Encryption codecs and server key generation/loading |
 | `internal/compression` | ZSTD, LZ4, and ZLIB integration |
@@ -158,7 +162,7 @@ Add resolvers to `client_resolvers.txt`:
 ### 4. Run Client
 
 ```bash
-./CottenDNS_Client_Linux_AMD64 --config client_config.toml
+./CottenDns_Client_Linux_AMD64 --config client_config.toml
 ```
 
 Then configure your browser or app:
@@ -274,7 +278,7 @@ NULL and HTTPS/SVCB response channels need no server config — the server auto-
 ### 🧪 Manual Server Run
 
 ```bash
-./CottenDNS_Server_Linux_AMD64 --config server_config.toml
+./CottenDns_Server_Linux_AMD64 --config server_config.toml
 ```
 
 Useful server flags:
@@ -288,7 +292,7 @@ Useful server flags:
 Every TOML key can be overridden using a lower-case dashed flag generated from the TOML key:
 
 ```bash
-./CottenDNS_Server_Linux_AMD64 --config server_config.toml --udp-port 5353 --log-level DEBUG
+./CottenDns_Server_Linux_AMD64 --config server_config.toml --udp-port 5353 --log-level DEBUG
 ```
 
 <a id="client-setup"></a>
@@ -305,7 +309,7 @@ Client release archives include:
 
 | File | Purpose |
 | --- | --- |
-| `CottenDNS_Client_*` | Client executable |
+| `CottenDns_Client_*` | Client executable |
 | `client_config.toml` | Client config template |
 | `client_config.speed.toml` / `client_config.survival.toml` / `client_config.tcp-survival.toml` | Paired client presets |
 | `client_resolvers.txt` | Resolver list template |
@@ -327,13 +331,13 @@ STARTUP_MODE = "resolvers"
 Run manually:
 
 ```bash
-./CottenDNS_Client_Linux_AMD64 --config client_config.toml
+./CottenDns_Client_Linux_AMD64 --config client_config.toml
 ```
 
 Windows example:
 
 ```powershell
-.\CottenDNS_Client_Windows_AMD64.exe --config client_config.toml
+.\CottenDns_Client_Windows_AMD64.exe --config client_config.toml
 ```
 
 Useful client flags:
@@ -347,7 +351,7 @@ Useful client flags:
 CLI override example:
 
 ```bash
-./CottenDNS_Client_Linux_AMD64 --config client_config.toml --listen-port 18001 --startup-mode logs
+./CottenDns_Client_Linux_AMD64 --config client_config.toml --listen-port 18001 --startup-mode logs
 ```
 
 ### 🐧 Linux Client Service
@@ -372,7 +376,7 @@ The client service runs non-interactively. If the config still has `STARTUP_MODE
 
 ## ⚙️ Configuration Overview
 
-CottenDNS uses TOML configuration files. There are no environment-variable configuration paths. Runtime paths are resolved relative to the executable/config location through `internal/runtimepath` and config helpers.
+CottenDns uses TOML configuration files. There are no environment-variable configuration paths. Runtime paths are resolved relative to the executable/config location through `internal/runtimepath` and config helpers.
 
 ### 🔐 Values That Must Match
 
@@ -502,7 +506,7 @@ The sample files are the source of truth for defaults and operational comments:
 
 ## 📡 Resolver, MTU, And Loss Tuning
 
-Resolver choice determines whether CottenDNS is usable. A resolver may work for ordinary DNS but fail for tunnel-sized labels, repeated queries, long names, or resolver-specific rate limits. Always let the client test your real resolver/domain path.
+Resolver choice determines whether CottenDns is usable. A resolver may work for ordinary DNS but fail for tunnel-sized labels, repeated queries, long names, or resolver-specific rate limits. Always let the client test your real resolver/domain path.
 
 ### 🧪 Practical Resolver Workflow
 
@@ -606,9 +610,9 @@ Packet flow:
 ```mermaid
 sequenceDiagram
     participant App as Application
-    participant Client as CottenDNS Client
+    participant Client as CottenDns Client
     participant Resolver as DNS Resolver
-    participant Server as CottenDNS Server
+    participant Server as CottenDns Server
     participant Target as Target
 
     App->>Client: SOCKS5/TCP connection
@@ -635,7 +639,7 @@ Usable options:
 | 🖥️ LAN proxy | Run the client on a computer and let phones use it as SOCKS5 over LAN |
 | 📦 Router/VPS client | Run the client on a router, mini PC, or VPS and point devices at it |
 | 📱 Termux | Use Termux artifacts where supported by the release matrix |
-| 🔗 Chaining | Chain another local proxy/panel into the CottenDNS SOCKS5 listener |
+| 🔗 Chaining | Chain another local proxy/panel into the CottenDns SOCKS5 listener |
 
 If another device must connect to the client over LAN:
 
@@ -659,10 +663,10 @@ vYYYY.MM.DD.HHMMSS-commithash
 Artifacts follow this pattern:
 
 ```text
-CottenDNS_Client_<Platform>_<ARCH>.zip
-CottenDNS_Client_<Platform>_<ARCH>.tar.gz
-CottenDNS_Server_<Platform>_<ARCH>.zip
-CottenDNS_Server_<Platform>_<ARCH>.tar.gz
+CottenDns_Client_<Platform>_<ARCH>.zip
+CottenDns_Client_<Platform>_<ARCH>.tar.gz
+CottenDns_Server_<Platform>_<ARCH>.zip
+CottenDns_Server_<Platform>_<ARCH>.tar.gz
 ```
 
 The GitHub Actions release matrix includes Windows, Linux, Linux-Legacy, macOS, and Termux/Android targets. Client packages include the executable, `client_config.toml`, paired `client_config.*.toml` presets, `client_resolvers.txt`, `CONFIG_PRESETS.md`, and the engineering notes. Linux client packages also include `client_linux_install.sh`. Server packages include the executable, `server_config.toml`, paired `server_config.*.toml` presets, `CONFIG_PRESETS.md`, and the engineering notes.
@@ -777,7 +781,7 @@ systemctl restart cottenpickdns-client
 
 ## 🛡️ Security And Responsibility
 
-CottenDNS is provided as-is, without warranty. You are responsible for how you deploy it, which networks you use it on, and whether that usage is legal in your jurisdiction.
+CottenDns is provided as-is, without warranty. You are responsible for how you deploy it, which networks you use it on, and whether that usage is legal in your jurisdiction.
 
 Operational safety notes:
 
@@ -788,7 +792,7 @@ Operational safety notes:
 | 🧭 Prefer `127.0.0.1` for listeners | Limits exposure to the local machine |
 | 🔥 Open only required firewall ports | Public server needs DNS port `53`; client usually does not need public inbound access |
 | 📊 Monitor logs under heavy loss | Resolver behavior changes over time |
-| 🧱 Do not run another DNS server on the same port | CottenDNS server needs UDP/53 for delegated tunnel traffic |
+| 🧱 Do not run another DNS server on the same port | CottenDns server needs UDP/53 for delegated tunnel traffic |
 
 ## 🤝 Contributing
 
@@ -811,7 +815,7 @@ Project links:
 
 ## 📄 License
 
-CottenDNS is an independent fork/derivative in the MasterDnsVPN family. This
+CottenDns is an independent fork/derivative in the MasterDnsVPN family. This
 repository is maintained by `tajirax`; it preserves credit to the upstream Null
 Route work this fork came from and to the original Master DNS / MasterDnsVPN
 project.
@@ -823,11 +827,11 @@ Project lineage:
 | Original project | Master DNS / MasterDnsVPN |
 | Original author | Amin Mahmoudi |
 | Upstream fork/source | Null Route / NullRoute1970 |
-| Current fork | CottenDNS / CottenpickDNS |
+| Current fork | CottenDns / CottenpickDNS |
 | Current maintainer | tajirax |
 | License | MIT License |
 
-CottenDNS modifications:
+CottenDns modifications:
 
 | Item | Value |
 | --- | --- |

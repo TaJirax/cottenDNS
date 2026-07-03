@@ -30,3 +30,4 @@ build/
 # stray local build outputs
 client.exe
 server.exe
+cmd/*/resource_windows_*.syso
