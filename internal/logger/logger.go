@@ -111,7 +111,14 @@ func parseLevel(raw string) int {
 }
 
 func (l *Logger) logf(level int, format string, args ...any) {
-	if l == nil || level < l.level {
+	l.logfInternal(level, false, format, args...)
+}
+
+// logfInternal emits a formatted line. When force is true the message is
+// emitted regardless of the configured level; this backs Machinef, which is
+// used for machine-readable status lines consumed by embedding clients.
+func (l *Logger) logfInternal(level int, force bool, format string, args ...any) {
+	if l == nil || (!force && level < l.level) {
 		return
 	}
 
@@ -162,6 +169,13 @@ func (l *Logger) Debugf(format string, args ...any) { l.logf(levelDebug, format,
 func (l *Logger) Infof(format string, args ...any)  { l.logf(levelInfo, format, args...) }
 func (l *Logger) Warnf(format string, args ...any)  { l.logf(levelWarn, format, args...) }
 func (l *Logger) Errorf(format string, args ...any) { l.logf(levelError, format, args...) }
+
+// Machinef emits a machine-readable status line (e.g. WD_PROGRESS/WD_RESOLVERS/
+// WD_SCAN) unconditionally, regardless of the configured log level, so an
+// embedding client can parse runtime state from the process output stream.
+func (l *Logger) Machinef(format string, args ...any) {
+	l.logfInternal(levelInfo, true, format, args...)
+}
 
 func (l *Logger) Enabled(level int) bool {
 	return l != nil && level >= l.level
