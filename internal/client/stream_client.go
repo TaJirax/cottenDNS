@@ -113,6 +113,25 @@ func (s *Stream_client) ingestFECShard(a *arq.ARQ, frame []byte) {
 }
 
 // get_new_stream_id finds the next available stream ID using a circular counter (1-65535).
+// activeLocalStreamCount reports how many local tunnel streams are currently
+// tracked, excluding the reserved virtual control stream (ID 0). It backs the
+// MAX_ACTIVE_STREAMS admission cap.
+func (c *Client) activeLocalStreamCount() int {
+	if c == nil {
+		return 0
+	}
+	c.streamsMu.RLock()
+	defer c.streamsMu.RUnlock()
+
+	count := 0
+	for id := range c.active_streams {
+		if id != 0 {
+			count++
+		}
+	}
+	return count
+}
+
 func (c *Client) get_new_stream_id() (uint16, bool) {
 	c.streamsMu.Lock()
 	defer c.streamsMu.Unlock()

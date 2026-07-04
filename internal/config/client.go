@@ -84,6 +84,10 @@ type ClientConfig struct {
 	// MasterDNS/StormDNS/WhiteDNS servers. Default false uses CottenDns's 2-byte
 	// native format. Must match the target server's engine generation.
 	LegacySessionID                       bool    `toml:"LEGACY_SESSION_ID"`
+	// MaxActiveStreams caps concurrent local tunnel streams (0 = unlimited).
+	MaxActiveStreams                      int     `toml:"MAX_ACTIVE_STREAMS"`
+	// LocalHandshakeTimeoutSeconds bounds the local SOCKS5/TCP client handshake.
+	LocalHandshakeTimeoutSeconds          float64 `toml:"LOCAL_HANDSHAKE_TIMEOUT_SECONDS"`
 	UploadCompressionType                 int     `toml:"UPLOAD_COMPRESSION_TYPE"`
 	DownloadCompressionType               int     `toml:"DOWNLOAD_COMPRESSION_TYPE"`
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
@@ -296,6 +300,8 @@ func defaultClientConfig() ClientConfig {
 		AutoDisableCheckIntervalSeconds:       1.0,
 		BaseEncodeData:                        false,
 		LegacySessionID:                       false,
+		MaxActiveStreams:                      2048,
+		LocalHandshakeTimeoutSeconds:          5.0,
 		UploadCompressionType:                 2,
 		DownloadCompressionType:               2,
 		CompressionMinSize:                    compression.DefaultMinSize,
@@ -560,6 +566,16 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	if cfg.QNameLabelLength <= 0 || cfg.QNameLabelLength > 63 {
 		cfg.QNameLabelLength = 63
 	}
+
+	if cfg.MaxActiveStreams < 0 {
+		cfg.MaxActiveStreams = 0
+	} else if cfg.MaxActiveStreams > 65535 {
+		cfg.MaxActiveStreams = 65535
+	}
+	if cfg.LocalHandshakeTimeoutSeconds <= 0 {
+		cfg.LocalHandshakeTimeoutSeconds = 5.0
+	}
+	cfg.LocalHandshakeTimeoutSeconds = clampFloat(cfg.LocalHandshakeTimeoutSeconds, 0.5, 60.0)
 
 	// EDNS_UDP_SIZE: unset/non-positive falls back to the default; otherwise clamp
 	// to a sane DNS range so a typo can neither underflow below a minimal message
@@ -869,6 +885,11 @@ func (c ClientConfig) DNSResponseFragmentTimeout() time.Duration {
 
 func (c ClientConfig) SOCKSUDPAssociateReadTimeout() time.Duration {
 	return time.Duration(c.SOCKSUDPAssociateReadTimeoutSeconds * float64(time.Second))
+}
+
+// LocalHandshakeTimeout is the bound for a local SOCKS5/TCP client handshake.
+func (c ClientConfig) LocalHandshakeTimeout() time.Duration {
+	return time.Duration(c.LocalHandshakeTimeoutSeconds * float64(time.Second))
 }
 
 func (c ClientConfig) ClientTerminalStreamRetention() time.Duration {
