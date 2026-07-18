@@ -294,7 +294,13 @@ func defaultClientConfig() ClientConfig {
 		RecheckServerIntervalSeconds:          1.0,
 		RecheckBatchSize:                      30,
 		AutoDisableTimeoutServers:             true,
-		AutoDisableTimeoutWindowSeconds:       20.0,
+		// A resolver is only culled after this many seconds of *uninterrupted*
+		// timeouts (zero successes). 20s was too twitchy for long/lossy sessions:
+		// resolvers having a rough patch got disabled faster than recovery could
+		// bring them back, ratcheting the pool down to the floor and collapsing
+		// throughput. 90s keeps genuinely-dead resolvers out while tolerating
+		// transient loss.
+		AutoDisableTimeoutWindowSeconds:       90.0,
 		AutoDisableMinObservations:            3,
 		AutoDisableCheckIntervalSeconds:       1.0,
 		BaseEncodeData:                        false,
@@ -599,7 +605,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.RecheckInactiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckInactiveIntervalSeconds, 30.0), 30.0, 86400.0)
 	cfg.RecheckServerIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckServerIntervalSeconds, 1.0), 1.0, 600.0)
 	cfg.RecheckBatchSize = clampInt(defaultIntBelow(cfg.RecheckBatchSize, 1, 30), 1, 1024)
-	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 20.0), 1.0, 86400.0)
+	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 90.0), 1.0, 86400.0)
 	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 3), 1, 10000)
 	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 1.0), 0.25, 600.0)
 	cfg.MaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.MaxPacketsPerBatch, 1, 10), 1, 64)

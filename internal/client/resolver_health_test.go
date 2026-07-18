@@ -64,12 +64,15 @@ func TestResolverHealthAutoDisablesTimeoutOnlyConnection(t *testing.T) {
 }
 
 func TestResolverHealthRecheckReactivatesConnection(t *testing.T) {
+	// >8 valid resolvers so the pool is not "under pressure": this exercises the
+	// conservative two-success reactivation path. (The one-success pressure path
+	// is covered by TestReactivationSuccessThresholdScalesWithPoolPressure.)
 	c := buildTestClientWithResolvers(config.ClientConfig{
 		RecheckInactiveServersEnabled:  true,
 		RecheckInactiveIntervalSeconds: 60.0,
 		RecheckServerIntervalSeconds:   3.0,
 		RecheckBatchSize:               2,
-	}, "a", "b")
+	}, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j")
 	c.successMTUChecks = true
 	c.syncedUploadMTU = 120
 	c.syncedDownloadMTU = 180
@@ -134,8 +137,8 @@ func TestResolverHealthRecheckReactivatesConnection(t *testing.T) {
 	if conn.UploadMTUBytes != 120 || conn.DownloadMTUBytes != 180 {
 		t.Fatalf("expected synced MTUs to be restored, got up=%d down=%d", conn.UploadMTUBytes, conn.DownloadMTUBytes)
 	}
-	if c.balancer.ValidCount() != 2 {
-		t.Fatalf("unexpected valid count after recheck: got=%d want=%d", c.balancer.ValidCount(), 2)
+	if c.balancer.ValidCount() != 10 {
+		t.Fatalf("unexpected valid count after recheck: got=%d want=%d", c.balancer.ValidCount(), 10)
 	}
 	if c.isRuntimeDisabledResolver("a") {
 		t.Fatal("expected runtime disabled marker to be cleared after reactivation")
@@ -143,12 +146,14 @@ func TestResolverHealthRecheckReactivatesConnection(t *testing.T) {
 }
 
 func TestResolverHealthRecheckUsesSnapshotUpdateInsteadOfMutatingSharedConnectionPointer(t *testing.T) {
+	// >8 valid resolvers so the pool is not "under pressure" and the conservative
+	// two-success reactivation path is exercised (see pool-pressure test).
 	c := buildTestClientWithResolvers(config.ClientConfig{
 		RecheckInactiveServersEnabled:  true,
 		RecheckInactiveIntervalSeconds: 60.0,
 		RecheckServerIntervalSeconds:   3.0,
 		RecheckBatchSize:               1,
-	}, "a", "b")
+	}, "a", "b", "c", "d", "e", "f", "g", "h", "i", "j")
 	c.successMTUChecks = true
 	c.syncedUploadMTU = 120
 	c.syncedDownloadMTU = 180

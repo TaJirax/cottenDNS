@@ -51,6 +51,24 @@ type resolverAutoDisableCandidate struct {
 
 const runtimeDisabledResolverReactivationSuccessThreshold = 2
 
+// resolverPoolPressureThreshold is the valid-resolver count at or below which the
+// active pool is treated as "under pressure". When depleted, recovery becomes
+// aggressive (a single successful recheck reactivates a resolver) so the pool can
+// refill as fast as it drains instead of ratcheting down to the floor over a long
+// session. Above it, recovery stays conservative to avoid flapping.
+const resolverPoolPressureThreshold = 8
+
+// reactivationSuccessThreshold reports how many consecutive successful rechecks a
+// runtime-disabled resolver must pass before rejoining the active pool. Under pool
+// pressure a single success is enough (a depleted pool recovers on the first good
+// probe); a healthy pool keeps the two-success confirmation.
+func (c *Client) reactivationSuccessThreshold() int {
+	if c != nil && c.balancer != nil && c.balancer.ValidCount() <= resolverPoolPressureThreshold {
+		return 1
+	}
+	return runtimeDisabledResolverReactivationSuccessThreshold
+}
+
 func (c *Client) resolverHealthDebugEnabled() bool {
 	return c != nil && c.log != nil && c.log.Enabled(logger.LevelDebug)
 }
@@ -624,7 +642,7 @@ func (c *Client) handleSuccessfulResolverRecheck(serverKey string, now time.Time
 	state, runtimeDisabled := c.runtimeDisabled[serverKey]
 	if runtimeDisabled {
 		state.SuccessCount++
-		if state.SuccessCount < runtimeDisabledResolverReactivationSuccessThreshold {
+		if state.SuccessCount < c.reactivationSuccessThreshold() {
 			nextAt := now.Add(maxDuration(2*time.Second, c.recheckServerInterval()))
 			meta := c.resolverRecheck[serverKey]
 			meta.InFlight = false
