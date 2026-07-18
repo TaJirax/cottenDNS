@@ -926,7 +926,7 @@ func TestCollectExpiredResolverTimeoutsCanTriggerAutoDisable(t *testing.T) {
 		}
 		c.resolverPending[key] = resolverSample{
 			serverKey: "a",
-			sentAt:    now.Add(-1 * time.Second),
+			sentAt:    now.Add(-3 * time.Second),
 		}
 		c.nowFn = func(current time.Time) func() time.Time {
 			return func() time.Time { return current }
@@ -954,6 +954,19 @@ func TestResolverRequestTimeoutHonorsShortAutoDisableWindow(t *testing.T) {
 
 	if got := c.resolverRequestTimeout(); got != 3*time.Second {
 		t.Fatalf("unexpected resolver request timeout: got=%s want=%s", got, 3*time.Second)
+	}
+}
+
+func TestResolverRequestTimeoutIgnoresHealthSweepFrequency(t *testing.T) {
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 90.0,
+		AutoDisableCheckIntervalSeconds: 1.0,
+		TunnelPacketTimeoutSec:          10.0,
+	}, "a")
+
+	if got := c.resolverRequestTimeout(); got != 10*time.Second {
+		t.Fatalf("health sweep shortened request timeout: got=%s want=%s", got, 10*time.Second)
 	}
 }
 
@@ -1044,6 +1057,52 @@ func TestResolverAutoDisableStopsAtThreeValidResolvers(t *testing.T) {
 	valid := c.balancer.ValidCount()
 	if valid != 3 {
 		t.Fatalf("expected no resolver to be disabled at the floor, got valid=%d", valid)
+	}
+}
+
+func TestStrategy5DisablesFailedPrimaryAndRequestsReserveRecluster(t *testing.T) {
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		ResolverBalancingStrategy:       int(BalancingMTUWeighted),
+		MTUAdaptiveGrouping:             true,
+		MTUWeightedMinPool:              2,
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 1.0,
+		AutoDisableMinObservations:      1,
+		AutoDisableCheckIntervalSeconds: 1.0,
+	}, "fast-a", "fast-b", "reserve-a", "reserve-b")
+	c.initResolverRecheckMeta()
+
+	for i := range c.connections {
+		c.connections[i].UploadMTUBytes = 120
+		c.connections[i].DownloadMTUBytes = 1000
+	}
+	c.connections[0].UploadMTUBytes = 200
+	c.connections[0].DownloadMTUBytes = 4000
+	c.connections[1].UploadMTUBytes = 200
+	c.connections[1].DownloadMTUBytes = 4000
+	c.connections[2].Backup = true
+	c.connections[3].Backup = true
+	ptrs := make([]*Connection, len(c.connections))
+	for i := range c.connections {
+		ptrs[i] = &c.connections[i]
+	}
+	c.balancer.SetConnections(ptrs)
+
+	base := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	c.recordResolverHealthEvent("fast-a", false, base)
+	c.recordResolverHealthEvent("fast-a", false, base.Add(400*time.Millisecond))
+	c.recordResolverHealthEvent("fast-a", false, base.Add(800*time.Millisecond))
+	c.runResolverAutoDisable(base.Add(1100 * time.Millisecond))
+
+	failed, ok := c.GetConnectionByKey("fast-a")
+	if !ok || failed.IsValid {
+		t.Fatal("strategy 5 did not disable the failed primary despite healthy reserves")
+	}
+	if got := c.balancer.ValidCount(); got != 1 {
+		t.Fatalf("active primary count after disable = %d, want 1 before restart", got)
+	}
+	if !c.runtimeResetPending.Load() {
+		t.Fatal("strategy 5 did not request a session restart to re-cluster reserves")
 	}
 }
 

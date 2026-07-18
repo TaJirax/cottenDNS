@@ -62,11 +62,15 @@ const resolverPoolPressureThreshold = 8
 // fresh working ones) is throttled hard so it can never burst bandwidth away from
 // the user's live traffic: at most discoveryRecheckPerBatch probe per recheck
 // batch, and no more often than discoveryRecheckMinSpacing. Recovery of
-// runtime-disabled (previously-working) resolvers is NOT throttled this way — we
-// want those back in the pool promptly.
+// previously-working resolvers gets a wider but still bounded wave so MTU probes
+// cannot overwhelm the live tunnel.
 const (
 	discoveryRecheckPerBatch   = 1
 	discoveryRecheckMinSpacing = 15 * time.Second
+	// Runtime recovery is more urgent than speculative discovery, but launching
+	// a full MTU probe for every disabled resolver at once can steal bandwidth
+	// from the live tunnel. Keep a small recovery wave in flight per batch.
+	runtimeRecoveryRecheckPerBatch = 4
 )
 
 // reactivationSuccessThreshold reports how many consecutive successful rechecks a
@@ -90,6 +94,56 @@ func (c *Client) activeResolverCount() int {
 	}
 
 	return c.balancer.ValidCount()
+}
+
+// hasStrategy5Reserve reports whether MTU-weighted balancing has a reachable
+// reserve tier that can take over after a session restart/re-cluster. The normal
+// three-resolver safety floor remains unchanged for every other strategy.
+func (c *Client) hasStrategy5Reserve(excludeKey string) bool {
+	if c == nil || c.balancer == nil || c.cfg.ResolverBalancingStrategy != int(BalancingMTUWeighted) || !c.cfg.MTUAdaptiveGrouping {
+		return false
+	}
+
+	usable := 0
+	hasReserve := false
+	for _, conn := range c.balancer.AllValidConnectionsIncludingBackup() {
+		if conn.Key == excludeKey {
+			continue
+		}
+		usable++
+		if conn.Backup {
+			hasReserve = true
+		}
+	}
+	return usable > 0 && hasReserve
+}
+
+func (c *Client) canDisableResolverConnection(serverKey string) bool {
+	if c == nil || c.balancer == nil {
+		return false
+	}
+	if c.balancer.ValidCount() > 3 {
+		return true
+	}
+	conn, ok := c.GetConnectionByKey(serverKey)
+	return ok && conn.IsValid && !conn.Backup && c.hasStrategy5Reserve(serverKey)
+}
+
+func (c *Client) strategy5PoolNeedsRestart() bool {
+	if c == nil || c.balancer == nil || c.cfg.ResolverBalancingStrategy != int(BalancingMTUWeighted) || !c.cfg.MTUAdaptiveGrouping {
+		return false
+	}
+	target := max(1, c.cfg.MTUWeightedMinPool)
+	primary := 0
+	reserve := 0
+	for _, conn := range c.balancer.AllValidConnectionsIncludingBackup() {
+		if conn.Backup {
+			reserve++
+		} else {
+			primary++
+		}
+	}
+	return reserve > 0 && primary < target
 }
 
 func (c *Client) initResolverRecheckMeta() {
@@ -316,7 +370,8 @@ func (c *Client) pruneResolverHealthLocked(state *resolverHealthState, now time.
 }
 
 func (c *Client) runResolverAutoDisable(now time.Time) {
-	if c == nil || !c.cfg.AutoDisableTimeoutServers || c.balancer.ValidCount() <= 3 {
+	if c == nil || !c.cfg.AutoDisableTimeoutServers ||
+		(c.balancer.ValidCount() <= 3 && !c.hasStrategy5Reserve("")) {
 		return
 	}
 
@@ -368,8 +423,8 @@ func (c *Client) runResolverAutoDisable(now time.Time) {
 	}
 
 	for _, candidate := range candidates {
-		if c.balancer.ValidCount() <= 3 {
-			return
+		if !c.canDisableResolverConnection(candidate.key) {
+			continue
 		}
 		c.disableResolverConnection(candidate.key, "100% timeout window")
 	}
@@ -400,7 +455,7 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 		return false
 	}
 	conn, ok := c.GetConnectionByKey(serverKey)
-	if !ok || !conn.IsValid || c.balancer.ValidCount() <= 3 {
+	if !ok || !conn.IsValid || !c.canDisableResolverConnection(serverKey) {
 		return false
 	}
 	now := c.now()
@@ -450,6 +505,9 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 			cause,
 			c.activeResolverCount(),
 		)
+	}
+	if c.strategy5PoolNeedsRestart() {
+		c.requestSessionRestart("MTU-weighted primary resolver pool fell below its configured minimum; re-clustering reserves")
 	}
 	return true
 }
@@ -608,6 +666,7 @@ func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 	}
 
 	discoveryBudget := discoveryRecheckPerBatch
+	runtimeRecoveryBudget := runtimeRecoveryRecheckPerBatch
 	for _, candidate := range candidates {
 		conn, ok := c.GetConnectionByKey(candidate.key)
 		if !ok || conn.IsValid {
@@ -616,8 +675,12 @@ func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 		// Gentle discovery: re-probing a never-valid resolver is purely
 		// speculative, so trickle it (at most discoveryRecheckPerBatch per batch,
 		// spaced by discoveryRecheckMinSpacing) so it never competes with the
-		// user's live traffic. Recovery of runtime-disabled resolvers is exempt.
-		if !candidate.runtimePriority {
+		// user's live traffic. Runtime recovery uses its own small per-batch budget.
+		if candidate.runtimePriority {
+			if runtimeRecoveryBudget <= 0 {
+				continue
+			}
+		} else {
 			if discoveryBudget <= 0 {
 				continue
 			}
@@ -640,7 +703,9 @@ func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 		}
 		c.resolverHealthMu.Unlock()
 
-		if !candidate.runtimePriority {
+		if candidate.runtimePriority {
+			runtimeRecoveryBudget--
+		} else {
 			discoveryBudget--
 			c.lastDiscoveryRecheckUnix.Store(now.UnixNano())
 		}

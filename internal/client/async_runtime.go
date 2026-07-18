@@ -767,8 +767,6 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
 					return
 				}
 				c.trackResolverFailure(data, addr, localAddr, receivedAt)
-			} else {
-				c.trackResolverSuccess(data, addr, localAddr, receivedAt)
 			}
 			// summary := DnsParser.DescribeResponseWithoutTunnelPayload(data)
 			// c.log.Debugf("DNS response from %v had no tunnel TXT payload | %s", addr, summary)

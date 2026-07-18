@@ -274,7 +274,11 @@ func (c *Client) recomputeMTUOperatingPoint() {
 	// current point yet, the current one is stranded, or the new one is a
 	// materially better download MTU (> ~12.5% larger). Otherwise keep the
 	// current MTU stable and just re-tier resolvers against it.
-	if !mtuShouldAdoptOperatingPoint(curUp, curDown, d, curPool) {
+	targetPool := 0
+	if c.cfg.ResolverBalancingStrategy == int(BalancingMTUWeighted) {
+		targetPool = max(1, c.cfg.MTUWeightedMinPool)
+	}
+	if !mtuShouldAdoptOperatingPoint(curUp, curDown, d, curPool, targetPool, n) {
 		c.balancer.ReclassifyBackups(func(cc Connection) bool {
 			return cc.DownloadMTUBytes < curDown || cc.UploadMTUBytes < curUp
 		})
@@ -302,11 +306,16 @@ func (c *Client) recomputeMTUOperatingPoint() {
 // yet, the current point is stranded (no survivor can carry it, curPool == 0),
 // or the new download MTU is materially larger (> 1/mtuHysteresisDivisor). This
 // keeps the session MTU stable under flapping/bad-resolver conditions.
-func mtuShouldAdoptOperatingPoint(curUp, curDown, newDown, curPool int) bool {
+func mtuShouldAdoptOperatingPoint(curUp, curDown, newDown, curPool, targetPool, newPool int) bool {
 	switch {
 	case curDown <= 0 || curUp <= 0:
 		return true
 	case curPool == 0:
+		return true
+	case targetPool > 0 && curPool < targetPool && newPool > curPool:
+		// Strategy 5 deliberately chooses a fast MTU tier, but once that tier
+		// falls below its configured minimum, prefer a wider/lower tier instead
+		// of stranding the session on one sick primary while reserves sit idle.
 		return true
 	case newDown > curDown+curDown/mtuHysteresisDivisor:
 		return true

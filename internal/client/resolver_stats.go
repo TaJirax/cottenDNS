@@ -150,13 +150,6 @@ func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, localAdd
 		return
 	}
 
-	// Carrier attribution: a decoded response means the record type it was sent
-	// as (echoed in the response's question) is working on this network. Feeds
-	// adaptive carrier fallback (see carrier_selector.go).
-	if qType, ok := DnsParser.FirstQuestionQType(packet); ok {
-		c.carrier.recordSuccess(qType)
-	}
-
 	key := resolverSampleKey{
 		resolverAddr: addr.String(),
 		localAddr:    localAddr,
@@ -172,6 +165,14 @@ func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, localAdd
 
 	if !ok || sample.serverKey == "" {
 		return
+	}
+
+	// Credit the carrier only after atomically claiming a real outstanding
+	// sample. handleInboundPacket calls this path only after decoding a tunnel
+	// frame, so empty/NODATA replies and duplicated DNS answers cannot inflate a
+	// carrier's delivery rate.
+	if qType, qTypeOK := DnsParser.FirstQuestionQType(packet); qTypeOK {
+		c.carrier.recordSuccess(qType)
 	}
 
 	if sample.timedOut && !sample.timedOutAt.IsZero() {
@@ -228,9 +229,6 @@ func (c *Client) resolverRequestTimeout() time.Duration {
 	timeout := c.tunnelPacketTimeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
-	}
-	if checkInterval := c.autoDisableCheckInterval(); checkInterval > 0 && checkInterval < timeout {
-		timeout = checkInterval
 	}
 	if window := c.autoDisableTimeoutWindow(); window > 0 && window < timeout {
 		timeout = window

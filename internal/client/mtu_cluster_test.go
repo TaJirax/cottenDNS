@@ -303,24 +303,29 @@ func TestConnectionsWithoutPreknownMTU(t *testing.T) {
 
 func TestMTUShouldAdoptOperatingPoint_Hysteresis(t *testing.T) {
 	// No current point yet -> adopt.
-	if !mtuShouldAdoptOperatingPoint(0, 0, 4000, 0) {
+	if !mtuShouldAdoptOperatingPoint(0, 0, 4000, 0, 2, 2) {
 		t.Error("should adopt when no current point exists")
 	}
 	// Current point stranded (curPool == 0) -> adopt even if smaller.
-	if !mtuShouldAdoptOperatingPoint(200, 4000, 1000, 0) {
+	if !mtuShouldAdoptOperatingPoint(200, 4000, 1000, 0, 2, 2) {
 		t.Error("should adopt when current MTU is stranded")
 	}
 	// Current sustainable, new only marginally larger (< 12.5%) -> keep stable.
-	if mtuShouldAdoptOperatingPoint(200, 4000, 4200, 5) {
+	if mtuShouldAdoptOperatingPoint(200, 4000, 4200, 5, 2, 5) {
 		t.Error("should NOT adopt a marginal (<12.5%) improvement (hysteresis)")
 	}
 	// Current sustainable, new materially larger (> 12.5%) -> adopt.
-	if !mtuShouldAdoptOperatingPoint(200, 4000, 4600, 5) {
+	if !mtuShouldAdoptOperatingPoint(200, 4000, 4600, 5, 2, 5) {
 		t.Error("should adopt a material (>12.5%) improvement")
 	}
 	// Current sustainable, new smaller but pool fine -> keep stable (no churn).
-	if mtuShouldAdoptOperatingPoint(200, 4000, 1000, 5) {
+	if mtuShouldAdoptOperatingPoint(200, 4000, 1000, 5, 2, 8) {
 		t.Error("should NOT lower the MTU while the current pool is healthy")
+	}
+	// Strategy 5 primary tier below its configured minimum -> widen the pool,
+	// even if that requires lowering the MTU.
+	if !mtuShouldAdoptOperatingPoint(200, 4000, 1000, 1, 2, 8) {
+		t.Error("should lower MTU when the strategy-5 primary pool is below target")
 	}
 }
 

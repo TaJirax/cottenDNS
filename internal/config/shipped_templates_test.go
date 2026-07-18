@@ -56,6 +56,19 @@ func TestShippedClientTemplateParses(t *testing.T) {
 	}
 }
 
+func TestShippedClientTemplateKeepsLongSessionRecoveryDefaults(t *testing.T) {
+	cfg, err := loadClientConfigFile(repoFile("client_config.toml.simple"))
+	if err != nil {
+		t.Fatalf("client_config.toml.simple failed to load: %v", err)
+	}
+	if cfg.AutoDisableTimeoutWindowSeconds != 90.0 {
+		t.Fatalf("AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS = %.1f, want 90.0", cfg.AutoDisableTimeoutWindowSeconds)
+	}
+	if cfg.ARQInactivityTimeoutSeconds != 600.0 {
+		t.Fatalf("ARQ_INACTIVITY_TIMEOUT_SECONDS = %.1f, want 600.0", cfg.ARQInactivityTimeoutSeconds)
+	}
+}
+
 func TestBundledPresetTemplatesParse(t *testing.T) {
 	serverPresets := []string{
 		"server_config.speed.toml",

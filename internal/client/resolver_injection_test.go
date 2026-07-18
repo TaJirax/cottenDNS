@@ -124,6 +124,51 @@ func TestGenuineServfailStillCountsAsFailure(t *testing.T) {
 	}
 }
 
+func TestNoDataResponseDoesNotClaimTunnelDelivery(t *testing.T) {
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 90.0,
+		TunnelPacketTimeoutSec:          10.0,
+	}, "a", "b", "c", "d")
+	c.initResolverRecheckMeta()
+
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5300}
+	const id uint16 = 71
+	key := resolverSampleKey{resolverAddr: addr.String(), dnsID: id}
+	c.resolverPending[key] = resolverSample{serverKey: "a", sentAt: time.Now()}
+
+	c.handleInboundPacket(buildRCodeResponse(t, id, 0), addr, "")
+
+	c.resolverStatsMu.Lock()
+	_, stillPending := c.resolverPending[key]
+	c.resolverStatsMu.Unlock()
+	if !stillPending {
+		t.Fatal("NOERROR/NODATA response consumed a pending tunnel sample")
+	}
+	if events, lastSuccess := resolverHealthEventCount(c, "a"); events != 0 || !lastSuccess.IsZero() {
+		t.Fatalf("NOERROR/NODATA was credited as tunnel delivery: events=%d lastSuccess=%v", events, lastSuccess)
+	}
+	if got := c.carrier.success[0].Load(); got != 0 {
+		t.Fatalf("NOERROR/NODATA credited carrier success: got=%d", got)
+	}
+}
+
+func TestDuplicateDecodedResponseCreditsCarrierOnce(t *testing.T) {
+	c := buildTestClientWithResolvers(config.ClientConfig{}, "a")
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5300}
+	const id uint16 = 72
+	key := resolverSampleKey{resolverAddr: addr.String(), dnsID: id}
+	c.resolverPending[key] = resolverSample{serverKey: "a", sentAt: time.Now()}
+	packet := buildRCodeResponse(t, id, 0)
+
+	c.trackResolverSuccess(packet, addr, "", time.Now())
+	c.trackResolverSuccess(packet, addr, "", time.Now())
+
+	if got := c.carrier.success[0].Load(); got != 1 {
+		t.Fatalf("duplicate response carrier successes = %d, want 1", got)
+	}
+}
+
 func TestInjectedNXDOMAINCountsAsFailureWhenToggleOff(t *testing.T) {
 	c := buildTestClientWithResolvers(config.ClientConfig{
 		ResolverIgnoreInjectedNXDOMAIN:  false, // legacy behavior

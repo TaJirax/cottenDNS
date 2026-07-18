@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -336,7 +336,7 @@ func TestStartAsyncRuntimeCollectsResolverTimeoutsEvenWhenHealthFeaturesDisabled
 	}, "expected resolver timeout sample to be collected even without auto-disable/recheck enabled")
 }
 
-func TestHandleInboundPacketTreatsMissingTXTAsResolverSuccess(t *testing.T) {
+func TestHandleInboundPacketLeavesMissingTXTPendingForRealTunnelAnswer(t *testing.T) {
 	c := buildTestClientWithResolvers(config.ClientConfig{}, "a", "b", "c", "d")
 	c.initResolverRecheckMeta()
 	addr := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53}
@@ -361,8 +361,8 @@ func TestHandleInboundPacketTreatsMissingTXTAsResolverSuccess(t *testing.T) {
 
 	c.handleInboundPacket(response, addr, "")
 
-	if len(c.resolverPending) != 0 {
-		t.Fatalf("expected resolverPending to be cleared after empty DNS success, got=%d", len(c.resolverPending))
+	if len(c.resolverPending) != 1 {
+		t.Fatalf("expected empty DNS response to remain pending, got=%d", len(c.resolverPending))
 	}
 }
 
