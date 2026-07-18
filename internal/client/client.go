@@ -52,23 +52,27 @@ type Client struct {
 	codec    *security.Codec
 	balancer *Balancer
 
-	connections         []Connection
-	connectionsByKey    map[string]int
-	successMTUChecks    bool
-	udpBufferPool       sync.Pool
-	resolverConnsMu     sync.Mutex
-	resolverConns       map[string]chan pooledUDPConn
-	resolverAddrMu      sync.RWMutex
-	resolverAddrCache   map[string]*net.UDPAddr
-	resolverStatsMu     sync.RWMutex
-	resolverPending     map[resolverSampleKey]resolverSample
-	resolverHealthMu    sync.RWMutex
-	resolverHealth      map[string]*resolverHealthState
-	resolverRecheck     map[string]resolverRecheckState
-	runtimeDisabled     map[string]resolverDisabledState
-	resolverRecheckSem  chan struct{}
-	nowFn               func() time.Time
-	recheckConnectionFn func(conn *Connection) bool
+	connections        []Connection
+	connectionsByKey   map[string]int
+	successMTUChecks   bool
+	udpBufferPool      sync.Pool
+	resolverConnsMu    sync.Mutex
+	resolverConns      map[string]chan pooledUDPConn
+	resolverAddrMu     sync.RWMutex
+	resolverAddrCache  map[string]*net.UDPAddr
+	resolverStatsMu    sync.RWMutex
+	resolverPending    map[resolverSampleKey]resolverSample
+	resolverHealthMu   sync.RWMutex
+	resolverHealth     map[string]*resolverHealthState
+	resolverRecheck    map[string]resolverRecheckState
+	runtimeDisabled    map[string]resolverDisabledState
+	resolverRecheckSem chan struct{}
+	// Unix-nanos of the last speculative "discovery" recheck (re-probing a
+	// never-valid resolver). Trickles discovery so it never bursts bandwidth
+	// away from the user's live traffic; see runResolverRecheckBatch.
+	lastDiscoveryRecheckUnix atomic.Int64
+	nowFn                    func() time.Time
+	recheckConnectionFn      func(conn *Connection) bool
 
 	// MTU States
 	syncedUploadMTU   int

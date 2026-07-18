@@ -58,6 +58,17 @@ const runtimeDisabledResolverReactivationSuccessThreshold = 2
 // session. Above it, recovery stays conservative to avoid flapping.
 const resolverPoolPressureThreshold = 8
 
+// Speculative discovery (re-probing never-valid resolvers mid-session to find
+// fresh working ones) is throttled hard so it can never burst bandwidth away from
+// the user's live traffic: at most discoveryRecheckPerBatch probe per recheck
+// batch, and no more often than discoveryRecheckMinSpacing. Recovery of
+// runtime-disabled (previously-working) resolvers is NOT throttled this way — we
+// want those back in the pool promptly.
+const (
+	discoveryRecheckPerBatch   = 1
+	discoveryRecheckMinSpacing = 15 * time.Second
+)
+
 // reactivationSuccessThreshold reports how many consecutive successful rechecks a
 // runtime-disabled resolver must pass before rejoining the active pool. Under pool
 // pressure a single success is enough (a depleted pool recovers on the first good
@@ -596,10 +607,24 @@ func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 		candidates = candidates[:limit]
 	}
 
+	discoveryBudget := discoveryRecheckPerBatch
 	for _, candidate := range candidates {
 		conn, ok := c.GetConnectionByKey(candidate.key)
 		if !ok || conn.IsValid {
 			continue
+		}
+		// Gentle discovery: re-probing a never-valid resolver is purely
+		// speculative, so trickle it (at most discoveryRecheckPerBatch per batch,
+		// spaced by discoveryRecheckMinSpacing) so it never competes with the
+		// user's live traffic. Recovery of runtime-disabled resolvers is exempt.
+		if !candidate.runtimePriority {
+			if discoveryBudget <= 0 {
+				continue
+			}
+			if last := c.lastDiscoveryRecheckUnix.Load(); last != 0 &&
+				now.Sub(time.Unix(0, last)) < discoveryRecheckMinSpacing {
+				continue
+			}
 		}
 		if !c.tryAcquireResolverRecheckSlot() {
 			break
@@ -614,6 +639,11 @@ func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 			continue
 		}
 		c.resolverHealthMu.Unlock()
+
+		if !candidate.runtimePriority {
+			discoveryBudget--
+			c.lastDiscoveryRecheckUnix.Store(now.UnixNano())
+		}
 
 		go func(cand resolverRecheckCandidate, cn Connection) {
 			defer func() {

@@ -373,6 +373,10 @@ func TestResolverHealthRecheckBatchStartsSecondDueResolverWithoutWaitingForFirst
 	c.resolverHealthMu.Lock()
 	c.resolverRecheck["a"] = resolverRecheckState{NextAt: now.Add(-time.Second)}
 	c.resolverRecheck["b"] = resolverRecheckState{NextAt: now.Add(-time.Second)}
+	// Runtime-disabled (recovery lane) candidates: exempt from the gentle-discovery
+	// per-batch throttle, so they start concurrently as this test asserts.
+	c.runtimeDisabled["a"] = resolverDisabledState{NextRetryAt: now.Add(-time.Second)}
+	c.runtimeDisabled["b"] = resolverDisabledState{NextRetryAt: now.Add(-time.Second)}
 	c.resolverHealthMu.Unlock()
 
 	firstStarted := make(chan struct{}, 1)
