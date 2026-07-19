@@ -214,7 +214,7 @@ func defaultServerConfig() ServerConfig {
 		MinVPNLabelLength:                 3,
 		SupportedUploadCompressionTypes:   []int{0, 3},
 		SupportedDownloadCompressionTypes: []int{0, 3},
-		DataEncryptionMethod:              1,
+		DataEncryptionMethod:              3,
 		EncryptionAutoDetect:              true,
 		FECAutoEnabled:                    true,
 		FECAutoLossThreshold:              0.3,
@@ -523,7 +523,7 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.SupportedDownloadCompressionTypes = normalizeCompressionTypeList(cfg.SupportedDownloadCompressionTypes)
 
 	if cfg.DataEncryptionMethod < 0 || cfg.DataEncryptionMethod > 5 {
-		cfg.DataEncryptionMethod = 1
+		cfg.DataEncryptionMethod = 3
 	}
 
 	if cfg.EncryptionKeyFile == "" {

@@ -260,7 +260,10 @@ FORWARD_PORT = 0
 # This is the method the server tries FIRST. With ENCRYPTION_AUTO_DETECT = true
 # (default) the server still accepts clients using any other method on the same
 # shared key, so it need not exactly match the client.
-DATA_ENCRYPTION_METHOD = 1
+# Default to authenticated AES-128-GCM. The server's safe auto-detection still
+# accepts clients using keyed methods 1-5, so each client may change encryption
+# without a server edit. Method 0 remains explicit because it has no keying.
+DATA_ENCRYPTION_METHOD = 3
 
 # Encryption-method auto-detection. When true (default), the server builds a
 # codec for every method from the shared key and detects which one each client

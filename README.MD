@@ -77,7 +77,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 | 🚧 UDP/53 is filtered or truncated | Automatic fallback to DNS-over-TCP/53 (same server port) for the whole tunnel — probe, session, and data plane |
 | 🧱 DPI/protocol filtering is common | DNS-only transport over ordinary UDP/53 (or TCP/53) query/response flow, rotating query types (TXT/CNAME/A/NULL/HTTPS/…), type-matched responses, QNAME label reshaping, and duplication spread across multiple domains |
 | 🧪 DNS injection/spoofing happens | Randomized query IDs, EDNS client cookies, and injected-NXDOMAIN ignore logic keep working resolvers from being falsely penalized |
-| 🔐 Key/method policy varies per client | Server auto-detects keyed client encryption methods without silently enabling unkeyed method 0; client IPs and resolver paths may change without allowlists |
+| 🔐 Key/method policy varies per client | Server defaults to authenticated AES-128-GCM and auto-detects keyed client methods 1-5 without silently enabling unkeyed method 0; client IPs and resolver paths may change without allowlists |
 
 ## ✨ Main Capabilities
 
