@@ -15,6 +15,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"cottendns-go/internal/config"
+	DnsParser "cottendns-go/internal/dnsparser"
+	Enums "cottendns-go/internal/enums"
+	"cottendns-go/internal/logger"
+	"cottendns-go/internal/security"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 // writeTCPDNSMessage frames and writes one length-prefixed DNS message.
@@ -100,6 +107,77 @@ func TestServeTCPDNSMessages_EmptyResponseKeepsConnOpen(t *testing.T) {
 	}
 	if len(resp) != 1 || resp[0] != 0x99 {
 		t.Fatalf("unexpected response: %v", resp)
+	}
+}
+
+func TestTCPFallbackUsesSameDynamicEncryptedCarrierHandler(t *testing.T) {
+	const sharedKey = "tcp-fallback-shared-key"
+	preferred, err := security.NewCodec(1, sharedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(config.ServerConfig{
+		Domain:                            []string{"v.example.com"},
+		MinVPNLabelLength:                 3,
+		SessionOrphanQueueInitialCap:      8,
+		StreamQueueInitialCapacity:        8,
+		DNSFragmentStoreCapacity:          8,
+		SOCKS5FragmentStoreCapacity:       8,
+		MaxStreamsPerSession:              16,
+		MaxActiveSessions:                 16,
+		DNSCacheMaxRecords:                16,
+		DNSCacheTTLSeconds:                60,
+		MaxPacketSize:                     4096,
+		MaxPacketsPerBatch:                1,
+		SupportedUploadCompressionTypes:   []int{0},
+		SupportedDownloadCompressionTypes: []int{0},
+	}, logger.New("tcp-fallback-test", "ERROR"), preferred)
+	methods := security.AutoDetectMethods(1)
+	codecSet, err := security.NewCodecSet(methods, sharedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetCodecSet(codecSet, 0)
+
+	changedCodec, err := security.NewCodec(5, sharedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := VpnProto.BuildEncoded(VpnProto.BuildOptions{
+		SessionID:  0,
+		PacketType: Enums.PACKET_MTU_UP_REQ,
+		Payload:    []byte{0, 1, 2, 3, 4},
+	}, changedCodec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, qname, err := DnsParser.PrepareTunnelDomainQname("v.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := DnsParser.BuildTunnelQuestionPacketShaped(normalized, qname, []byte(encoded), Enums.DNS_RECORD_TYPE_HTTPS, DnsParser.QueryShaping{
+		EDNSUDPSize: 4096, RandomizeID: true, EDNSCookie: true, CaseRandomize: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	go func() {
+		serveTCPDNSMessages(context.Background(), server, s.safeHandlePacket)
+		_ = server.Close()
+	}()
+	if err := writeTCPDNSMessage(client, query); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	response, err := readTCPDNSMessage(client)
+	if err != nil {
+		t.Fatalf("TCP fallback did not return the Cotten response: %v", err)
+	}
+	if len(response) == 0 {
+		t.Fatal("TCP fallback returned an empty Cotten response")
 	}
 }
 

@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -65,6 +65,21 @@ func ParseInflatedFromLabels(labels string, codec *security.Codec) (Packet, erro
 // unauthenticated methods (None/XOR/ChaCha20) the header validation in Parse is
 // what rejects a wrong-method guess.
 func ParseInflatedFromLabelsAny(labels string, codecs []*security.Codec, startIdx int) (Packet, int, error) {
+	packet, idx, err := ParseFromLabelsAny(labels, codecs, startIdx)
+	if err != nil {
+		return Packet{}, idx, err
+	}
+	packet, err = InflatePayload(packet)
+	if err != nil {
+		return Packet{}, idx, err
+	}
+	return packet, idx, nil
+}
+
+// ParseFromLabelsAny performs only decoding, decryption and frame-header
+// validation. Ingress admission uses this variant before queueing so hostile
+// packets cannot trigger decompression or consume worker-queue memory.
+func ParseFromLabelsAny(labels string, codecs []*security.Codec, startIdx int) (Packet, int, error) {
 	n := len(codecs)
 	if n == 0 {
 		return Packet{}, -1, ErrCodecUnavailable
@@ -79,7 +94,7 @@ func ParseInflatedFromLabelsAny(labels string, codecs []*security.Codec, startId
 		if codecs[idx] == nil {
 			continue
 		}
-		packet, err := ParseInflatedFromLabels(labels, codecs[idx])
+		packet, err := ParseFromLabels(labels, codecs[idx])
 		if err == nil {
 			return packet, idx, nil
 		}

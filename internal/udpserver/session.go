@@ -1016,6 +1016,11 @@ func (r *sessionRecord) closeAllStreams(reason string) {
 		}
 
 		stream.finalizeAfterARQClose(reason)
+		// ARQ finalization may briefly enqueue its terminal control packet while
+		// the close callback is clearing resources. A whole-session teardown has
+		// no consumer left for that packet, so make the post-close state
+		// deterministic and release it here as well.
+		stream.ClearTXQueue()
 	}
 
 	r.StreamsMu.Lock()

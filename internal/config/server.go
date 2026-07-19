@@ -34,23 +34,24 @@ type ServerConfig struct {
 	// TCPListenerEnabled also serves DNS-over-TCP on the same host:port, so
 	// clients on networks that filter or truncate UDP/53 can fall back to TCP/53.
 	// Default true. TCPMaxConns caps concurrent TCP connections (0 = default).
-	TCPListenerEnabled                bool     `toml:"TCP_LISTENER_ENABLED"`
-	TCPMaxConns                       int      `toml:"TCP_MAX_CONNS"`
-	TCPMaxConnsPerIP                  int      `toml:"TCP_MAX_CONNS_PER_IP"`
-	TCPMaxQueriesPerConn              int      `toml:"TCP_MAX_QUERIES_PER_CONN"`
-	TCPReadIdleTimeoutSeconds         float64  `toml:"TCP_READ_IDLE_TIMEOUT_SECONDS"`
-	TCPWriteTimeoutSeconds            float64  `toml:"TCP_WRITE_TIMEOUT_SECONDS"`
-	SocketBufferSize                  int      `toml:"SOCKET_BUFFER_SIZE"`
-	MaxConcurrentRequests             int      `toml:"MAX_CONCURRENT_REQUESTS"`
-	DNSRequestWorkers                 int      `toml:"DNS_REQUEST_WORKERS"`
-	DeferredSessionWorkers            int      `toml:"DEFERRED_SESSION_WORKERS"`
-	DeferredSessionQueueLimit         int      `toml:"DEFERRED_SESSION_QUEUE_LIMIT"`
-	SessionOrphanQueueInitialCap      int      `toml:"SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY"`
-	StreamQueueInitialCapacity        int      `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
-	DNSFragmentStoreCapacity          int      `toml:"DNS_FRAGMENT_STORE_CAPACITY"`
-	SOCKS5FragmentStoreCapacity       int      `toml:"SOCKS5_FRAGMENT_STORE_CAPACITY"`
-	MaxPacketSize                     int      `toml:"MAX_PACKET_SIZE"`
-	MaxStreamsPerSession              int      `toml:"MAX_STREAMS_PER_SESSION"`
+	TCPListenerEnabled           bool    `toml:"TCP_LISTENER_ENABLED"`
+	TCPMaxConns                  int     `toml:"TCP_MAX_CONNS"`
+	TCPMaxConnsPerIP             int     `toml:"TCP_MAX_CONNS_PER_IP"`
+	TCPMaxQueriesPerConn         int     `toml:"TCP_MAX_QUERIES_PER_CONN"`
+	TCPReadIdleTimeoutSeconds    float64 `toml:"TCP_READ_IDLE_TIMEOUT_SECONDS"`
+	TCPWriteTimeoutSeconds       float64 `toml:"TCP_WRITE_TIMEOUT_SECONDS"`
+	SocketBufferSize             int     `toml:"SOCKET_BUFFER_SIZE"`
+	MaxConcurrentRequests        int     `toml:"MAX_CONCURRENT_REQUESTS"`
+	MaxIngressQueueBytes         int     `toml:"MAX_INGRESS_QUEUE_BYTES"`
+	DNSRequestWorkers            int     `toml:"DNS_REQUEST_WORKERS"`
+	DeferredSessionWorkers       int     `toml:"DEFERRED_SESSION_WORKERS"`
+	DeferredSessionQueueLimit    int     `toml:"DEFERRED_SESSION_QUEUE_LIMIT"`
+	SessionOrphanQueueInitialCap int     `toml:"SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY"`
+	StreamQueueInitialCapacity   int     `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
+	DNSFragmentStoreCapacity     int     `toml:"DNS_FRAGMENT_STORE_CAPACITY"`
+	SOCKS5FragmentStoreCapacity  int     `toml:"SOCKS5_FRAGMENT_STORE_CAPACITY"`
+	MaxPacketSize                int     `toml:"MAX_PACKET_SIZE"`
+	MaxStreamsPerSession         int     `toml:"MAX_STREAMS_PER_SESSION"`
 	// MaxActiveSessions caps concurrent live tunnel sessions, protecting server
 	// memory/CPU from being exhausted by session-init floods. The session-ID space
 	// is 16-bit (65535 slots) but that many live sessions is far more load than a
@@ -105,9 +106,9 @@ type ServerConfig struct {
 	// the retransmit rate and turns FEC on once that loss crosses
 	// FECAutoLossThreshold, scaling parity to the measured loss (between FECParity
 	// and FECAutoMaxParity). Below the threshold there is zero FEC overhead.
-	FECAutoEnabled                 bool    `toml:"FEC_AUTO_ENABLED"`
-	FECAutoLossThreshold           float64 `toml:"FEC_AUTO_LOSS_THRESHOLD"`
-	FECAutoMaxParity               int     `toml:"FEC_AUTO_MAX_PARITY"`
+	FECAutoEnabled       bool    `toml:"FEC_AUTO_ENABLED"`
+	FECAutoLossThreshold float64 `toml:"FEC_AUTO_LOSS_THRESHOLD"`
+	FECAutoMaxParity     int     `toml:"FEC_AUTO_MAX_PARITY"`
 	// Super-FEC: a last-ditch, maximum-parity band for extreme download loss. When
 	// FECSuperEnabled and the measured loss enters [FECSuperLossFloor,
 	// FECSuperLossCeil], parity is driven to FECAutoMaxParity for a best-effort
@@ -121,7 +122,7 @@ type ServerConfig struct {
 	// auto-sizes to the Reed-Solomon hard limit for the block. Bounding it lets an
 	// operator trade rebuild strength against the bandwidth amplification that very
 	// high parity implies.
-	FECSuperMaxParity int `toml:"FEC_SUPER_MAX_PARITY"`
+	FECSuperMaxParity              int     `toml:"FEC_SUPER_MAX_PARITY"`
 	LogLevel                       string  `toml:"LOG_LEVEL"`
 	ARQWindowSize                  int     `toml:"ARQ_WINDOW_SIZE"`
 	ARQInitialRTOSeconds           float64 `toml:"ARQ_INITIAL_RTO_SECONDS"`
@@ -169,6 +170,7 @@ func defaultServerConfig() ServerConfig {
 		UDPReaders:                        readers,
 		SocketBufferSize:                  8 * 1024 * 1024,
 		MaxConcurrentRequests:             16384,
+		MaxIngressQueueBytes:              64 * 1024 * 1024,
 		DNSRequestWorkers:                 workers,
 		DeferredSessionWorkers:            8,
 		DeferredSessionQueueLimit:         4096,
@@ -176,7 +178,7 @@ func defaultServerConfig() ServerConfig {
 		StreamQueueInitialCapacity:        128,
 		DNSFragmentStoreCapacity:          256,
 		SOCKS5FragmentStoreCapacity:       512,
-		MaxPacketSize:                     65535,
+		MaxPacketSize:                     4096,
 		MaxStreamsPerSession:              4096,
 		MaxActiveSessions:                 2048,
 		MaxDNSResponseBytes:               32768,
@@ -336,6 +338,7 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	if cfg.MaxConcurrentRequests <= 0 {
 		cfg.MaxConcurrentRequests = 4096
 	}
+	cfg.MaxIngressQueueBytes = clampInt(defaultIntBelow(cfg.MaxIngressQueueBytes, 1, 64*1024*1024), 1024*1024, 512*1024*1024)
 
 	if cfg.DNSRequestWorkers <= 0 {
 		cfg.DNSRequestWorkers = defaultServerConfig().DNSRequestWorkers
@@ -360,9 +363,11 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.StreamQueueInitialCapacity = clampInt(defaultIntBelow(cfg.StreamQueueInitialCapacity, 1, 128), 8, 65536)
 	cfg.DNSFragmentStoreCapacity = clampInt(defaultIntBelow(cfg.DNSFragmentStoreCapacity, 1, 256), 16, 16384)
 	cfg.SOCKS5FragmentStoreCapacity = clampInt(defaultIntBelow(cfg.SOCKS5FragmentStoreCapacity, 1, 512), 16, 16384)
-	if cfg.MaxPacketSize <= 0 {
-		cfg.MaxPacketSize = 65535
-	}
+	// Cotten upstream data lives in a DNS QNAME, whose full wire name is at
+	// most 255 bytes. Keep generous EDNS/additional-record headroom without
+	// allowing every queued UDP request to retain a 65,535-byte backing array.
+	// TCP/53 uses its own length-framed buffer and is unaffected by this limit.
+	cfg.MaxPacketSize = clampInt(defaultIntBelow(cfg.MaxPacketSize, 1, 4096), 512, 4096)
 	cfg.MaxStreamsPerSession = clampInt(defaultIntBelow(cfg.MaxStreamsPerSession, 1, 4096), 16, 65535)
 	cfg.MaxActiveSessions = clampInt(defaultIntBelow(cfg.MaxActiveSessions, 1, 2048), 1, 65535)
 	cfg.MaxDNSResponseBytes = clampInt(defaultIntBelow(cfg.MaxDNSResponseBytes, 1, 32768), 512, 65535)

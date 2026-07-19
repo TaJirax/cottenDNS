@@ -93,14 +93,15 @@ func main() {
 	// key so the server adapts to whatever method the client uses, with the
 	// configured method tried first. Disabled by ENCRYPTION_AUTO_DETECT=false.
 	if cfg.EncryptionAutoDetect {
-		codecSet, setErr := security.NewCodecSet(security.AllMethods, keyInfo.Key)
+		autoDetectMethods := security.AutoDetectMethods(cfg.DataEncryptionMethod)
+		codecSet, setErr := security.NewCodecSet(autoDetectMethods, keyInfo.Key)
 		if setErr != nil {
 			log.Errorf("❌ <red>Encryption Codec Set Setup Failed</red> <magenta>|</magenta> <cyan>%v</cyan>", setErr)
 			waitForExitInput()
 			os.Exit(1)
 		}
 		preferred := 0
-		for i, m := range security.AllMethods {
+		for i, m := range autoDetectMethods {
 			if m == cfg.DataEncryptionMethod {
 				preferred = i
 				break
@@ -108,6 +109,9 @@ func main() {
 		}
 		srv.SetCodecSet(codecSet, preferred)
 		log.Infof("\U0001F513 <green>Encryption Auto-Detect: <cyan>enabled</cyan> <gray>(%d methods, default tried first)</gray></green>", len(codecSet))
+		if cfg.DataEncryptionMethod == 0 {
+			log.Warnf("<yellow>DATA_ENCRYPTION_METHOD=0 permits unauthenticated tunnel frames; use method 1 or an AEAD method (3-5) for ingress flood resistance</yellow>")
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -69,6 +69,19 @@ func NewCodecFromConfig(cfg config.ServerConfig, rawKey string) (*Codec, error) 
 
 // AllMethods lists every supported encryption method id, in ascending order.
 var AllMethods = []int{0, 1, 2, 3, 4, 5}
+
+// AutoDetectMethods returns the safe compatibility set for a server. Method 0
+// has no keying at all, so silently enabling it beside an encrypted configured
+// method would let anyone manufacture apparently valid tunnel frames. Keyed
+// legacy methods remain available for existing clients, and all AEAD methods
+// remain available for clients that upgrade encryption without a server edit.
+func AutoDetectMethods(configured int) []int {
+	methods := []int{1, 2, 3, 4, 5}
+	if configured == 0 {
+		return append([]int{0}, methods...)
+	}
+	return methods
+}
 
 // IsAuthenticatedMethod reports whether the method provides authenticated
 // encryption (AEAD). Only AES-GCM (methods 3, 4, 5) authenticate: a wrong key or

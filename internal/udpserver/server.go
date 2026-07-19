@@ -80,6 +80,7 @@ type Server struct {
 	immediateConnectedLog    throttledLogState
 	invalidSessionDropLog    throttledLogState
 	droppedPackets           atomic.Uint64
+	ingressRejectedPackets   atomic.Uint64
 	lastDropLogUnix          atomic.Int64
 	deferredDroppedPackets   atomic.Uint64
 	lastDeferredDropLogUnix  atomic.Int64
@@ -108,6 +109,7 @@ type Server struct {
 // goroutine.
 type Stats struct {
 	DroppedPackets          uint64
+	IngressRejectedPackets  uint64
 	DeferredDroppedPackets  uint64
 	StreamCapRejections     uint64
 	DNSResponseOversize     uint64
@@ -138,6 +140,7 @@ func (s *Server) Stats() Stats {
 	activeSessions, activeStreams := s.sessions.operationalCounts()
 	return Stats{
 		DroppedPackets:          s.droppedPackets.Load(),
+		IngressRejectedPackets:  s.ingressRejectedPackets.Load(),
 		DeferredDroppedPackets:  s.deferredDroppedPackets.Load(),
 		StreamCapRejections:     s.sessions.streamCapRejectionsCount(),
 		DNSResponseOversize:     s.dnsResponseOversize.Load(),
@@ -399,15 +402,17 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.configureSocketBuffers(conn)
 
+	queueCapacity := s.ingressQueueCapacity()
 	s.log.Infof(
-		"\U0001F4E1 <green>UDP Listener Ready, Addr: <cyan>%s</cyan>, Readers: <cyan>%d</cyan>, Workers: <cyan>%d</cyan>, Queue: <cyan>%d</cyan></green>",
+		"\U0001F4E1 <green>UDP Listener Ready, Addr: <cyan>%s</cyan>, Readers: <cyan>%d</cyan>, Workers: <cyan>%d</cyan>, Queue: <cyan>%d</cyan> <gray>(memory cap %d bytes)</gray></green>",
 		s.cfg.Address(),
 		s.cfg.UDPReaders,
 		s.cfg.DNSRequestWorkers,
-		s.cfg.MaxConcurrentRequests,
+		queueCapacity,
+		s.cfg.MaxIngressQueueBytes,
 	)
 
-	reqCh := make(chan request, s.cfg.MaxConcurrentRequests)
+	reqCh := make(chan request, queueCapacity)
 	var workerWG sync.WaitGroup
 	cleanupDone := make(chan struct{})
 

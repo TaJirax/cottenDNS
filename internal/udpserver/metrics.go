@@ -25,6 +25,7 @@ func (s *Server) MetricsHandler() http.Handler {
 		writeMetric("active_sessions", stats.ActiveSessions)
 		writeMetric("active_streams", stats.ActiveStreams)
 		writeMetric("dropped_packets_total", stats.DroppedPackets)
+		writeMetric("ingress_rejected_packets_total", stats.IngressRejectedPackets)
 		writeMetric("deferred_dropped_packets_total", stats.DeferredDroppedPackets)
 		writeMetric("stream_cap_rejections_total", stats.StreamCapRejections)
 		writeMetric("dns_response_oversize_total", stats.DNSResponseOversize)

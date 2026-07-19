@@ -39,6 +39,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 - **TCP survival-path guardrails.** TCP/53 is treated as a first-class fallback path: per-IP connection caps, optional per-connection query limits, read-idle timeouts, and write deadlines protect the listener while keeping persistent DNS-over-TCP useful.
 - **Paired config presets.** Bundled client/server pairs (`speed`, `survival`, `tcp-survival`) tune both sides together through `CONFIG_PRESET`, while explicit TOML/CLI values still override the profile.
 - **More honest MTU loss reporting.** Loss-aware MTU probing now reports failures against the configured sample budget, so scans can show intermediate loss percentages instead of collapsing early rejects into only `0%` or `100%`.
+- **Flood-resistant UDP ingress.** Public UDP/53 noise is parsed, domain-checked, and key-validated before it can enter the worker queue. A 64 MiB transient byte ceiling plus DNS-sized receive buffers retain the full burst queue without consuming session/stream memory; upgraded legacy 65,535-byte buffer settings are clamped safely.
 - **Crypto-grade cheap DNS randomness.** DNS transaction-ID randomization and EDNS client-cookie generation now use `crypto/rand` with fallback, improving spoofing hardness and making query shaping closer to modern resolver behavior.
 - **Intelligent rate limiting.** A resolver that signals overload (REFUSED/SERVFAIL or timeouts) is briefly cooled down (AIMD) and its load shifts to resolvers with headroom — redistribution, not a global throttle. It's self-gating (does nothing to healthy resolvers), never idles, and avoids tripping resolver/IP rate-limit blocks.
 - **QNAME reshaping.** `QNAME_LABEL_LENGTH` lays the payload into shorter, jittered DNS labels instead of one chain of uniform 63-char labels — a lower-fingerprint knob. Server-transparent (the server reassembles labels regardless), so it can't desync; default keeps maximal capacity.
@@ -76,7 +77,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 | 🚧 UDP/53 is filtered or truncated | Automatic fallback to DNS-over-TCP/53 (same server port) for the whole tunnel — probe, session, and data plane |
 | 🧱 DPI/protocol filtering is common | DNS-only transport over ordinary UDP/53 (or TCP/53) query/response flow, rotating query types (TXT/CNAME/A/NULL/HTTPS/…), type-matched responses, QNAME label reshaping, and duplication spread across multiple domains |
 | 🧪 DNS injection/spoofing happens | Randomized query IDs, EDNS client cookies, and injected-NXDOMAIN ignore logic keep working resolvers from being falsely penalized |
-| 🔐 Key/method policy varies per client | Server auto-detects the client's encryption method, so a client can change it without server reconfiguration |
+| 🔐 Key/method policy varies per client | Server auto-detects keyed client encryption methods without silently enabling unkeyed method 0; client IPs and resolver paths may change without allowlists |
 
 ## ✨ Main Capabilities
 
@@ -88,7 +89,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 | 🔁 Reliability | ARQ, ACK/NACK, RTO, retry limits, stream cleanup, packed controls; download-path Reed-Solomon FEC, always-on (`FEC_DOWNLOAD_ENABLED`) or loss-triggered/auto (`FEC_AUTO_ENABLED`) |
 | 📦 Efficiency | MTU discovery, packet packing, optional base encoding, ZSTD/LZ4/ZLIB |
 | 🕵️ Anti-fingerprinting | Query-type rotation (`QUERY_TYPES`), server-accepted-by-default response RR-type matching (TXT→TXT, NULL→NULL, HTTPS/SVCB→service-binding, A→A-records, others→CNAME with TXT fallback), QNAME label reshaping (`QNAME_LABEL_LENGTH`), domain-diverse packet duplication (`DUPLICATION_PREFER_DISTINCT_DOMAINS`) |
-| 🔐 Security | None, XOR, ChaCha20, AES-128-GCM, AES-192-GCM, AES-256-GCM; server-side encryption-method auto-detection (`ENCRYPTION_AUTO_DETECT`); crypto-backed DNS query IDs and EDNS cookies |
+| 🔐 Security | None, XOR, ChaCha20, AES-128-GCM, AES-192-GCM, AES-256-GCM; safe keyed server-side encryption-method auto-detection (`ENCRYPTION_AUTO_DETECT`); pre-queue tunnel validation; crypto-backed DNS query IDs and EDNS cookies |
 | 📛 DNS features | Optional client-side local DNS listener/cache and server-side upstream DNS/cache |
 | 🧰 Operations | Paired config presets, Linux systemd installers, CLI overrides, cross-platform release workflow |
 | 🧪 Testing | Standard Go tests across client, server, ARQ, config, DNS, protocol, and utility packages |
@@ -507,7 +508,7 @@ The sample files are the source of truth for defaults and operational comments:
 | --- | --- |
 | 🧭 Presets | `CONFIG_PRESET` |
 | 🪪 Tunnel policy | `DOMAIN`, `PROTOCOL_TYPE`, `SUPPORTED_UPLOAD_COMPRESSION_TYPES`, `SUPPORTED_DOWNLOAD_COMPRESSION_TYPES`, `MIN_VPN_LABEL_LENGTH`, `A_RECORD_DATA_DELIVERY` |
-| 🚪 UDP/TCP listener/capacity | `UDP_HOST`, `UDP_PORT`, `UDP_READERS`, `TCP_LISTENER_ENABLED`, `TCP_MAX_CONNS`, `TCP_MAX_CONNS_PER_IP`, `TCP_MAX_QUERIES_PER_CONN`, `TCP_READ_IDLE_TIMEOUT_SECONDS`, `TCP_WRITE_TIMEOUT_SECONDS`, `DNS_REQUEST_WORKERS`, `MAX_CONCURRENT_REQUESTS`, `SOCKET_BUFFER_SIZE`, `MAX_PACKET_SIZE`, `DROP_LOG_INTERVAL_SECONDS` |
+| 🚪 UDP/TCP listener/capacity | `UDP_HOST`, `UDP_PORT`, `UDP_READERS`, `TCP_LISTENER_ENABLED`, `TCP_MAX_CONNS`, `TCP_MAX_CONNS_PER_IP`, `TCP_MAX_QUERIES_PER_CONN`, `TCP_READ_IDLE_TIMEOUT_SECONDS`, `TCP_WRITE_TIMEOUT_SECONDS`, `DNS_REQUEST_WORKERS`, `MAX_CONCURRENT_REQUESTS`, `MAX_INGRESS_QUEUE_BYTES`, `SOCKET_BUFFER_SIZE`, `MAX_PACKET_SIZE`, `DROP_LOG_INTERVAL_SECONDS` |
 | 🧵 Deferred runtime/queues | `DEFERRED_SESSION_WORKERS`, `DEFERRED_SESSION_QUEUE_LIMIT`, `SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY`, `STREAM_QUEUE_INITIAL_CAPACITY`, `DNS_FRAGMENT_STORE_CAPACITY`, `SOCKS5_FRAGMENT_STORE_CAPACITY`, `MAX_STREAMS_PER_SESSION`, `MAX_DNS_RESPONSE_BYTES` |
 | 🧹 Session lifecycle | `INVALID_COOKIE_WINDOW_SECONDS`, `INVALID_COOKIE_ERROR_THRESHOLD`, `SESSION_TIMEOUT_SECONDS`, `SESSION_CLEANUP_INTERVAL_SECONDS`, `CLOSED_SESSION_RETENTION_SECONDS`, `SESSION_INIT_REUSE_TTL_SECONDS`, `RECENTLY_CLOSED_STREAM_TTL_SECONDS`, `RECENTLY_CLOSED_STREAM_CAP`, `TERMINAL_STREAM_RETENTION_SECONDS` |
 | 📛 DNS upstream/cache | `DNS_UPSTREAM_SERVERS`, `DNS_UPSTREAM_TIMEOUT`, `DNS_INFLIGHT_WAIT_TIMEOUT_SECONDS`, `DNS_FRAGMENT_ASSEMBLY_TIMEOUT`, `DNS_CACHE_MAX_RECORDS`, `DNS_CACHE_TTL_SECONDS` |

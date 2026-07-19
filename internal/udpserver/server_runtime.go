@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -158,6 +158,17 @@ func (s *Server) readLoop(ctx context.Context, conn *net.UDPConn, reqCh chan<- r
 				err,
 			)
 			return err
+		}
+
+		// Reject ordinary DNS noise, malformed datagrams and frames that cannot
+		// be decoded with the configured shared key before they can occupy the
+		// worker queue. This ordering is essential on public UDP/53: queueing a
+		// full-size receive buffer before classification lets a packet flood turn
+		// MAX_CONCURRENT_REQUESTS into a multi-gigabyte memory reservation.
+		if !s.admitIngressPacket(buffer[:n]) {
+			s.ingressRejectedPackets.Add(1)
+			s.packetPool.Put(buffer)
+			continue
 		}
 
 		select {

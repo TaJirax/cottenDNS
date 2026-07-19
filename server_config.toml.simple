@@ -78,11 +78,20 @@ DNS_REQUEST_WORKERS = 7
 # helps the server absorb short bursts without dropping front-door requests too early.
 MAX_CONCURRENT_REQUESTS = 16384
 
+# Hard memory ceiling for transient queued UDP receive buffers. This does not
+# limit session lifetime, stream count, ARQ windows, or long-lived connections.
+# With the 4 KiB packet buffer below, 64 MiB retains the full 16,384-request
+# burst capacity without allowing a public UDP/53 flood to consume ~1 GiB.
+MAX_INGRESS_QUEUE_BYTES = 67108864
+
 # UDP socket read/write buffer size in bytes.
 SOCKET_BUFFER_SIZE = 8388608
 
 # Maximum packet buffer size allocated by the server packet pool.
-MAX_PACKET_SIZE = 65535
+# Cotten uploads ride in DNS QNAMEs (maximum 255-byte wire name); 4 KiB leaves
+# ample room for DNS headers and EDNS while keeping every queue slot bounded.
+# Older configs containing 65535 are safely clamped to 4096 at startup.
+MAX_PACKET_SIZE = 4096
 
 # Minimum interval between overload/drop logs.
 DROP_LOG_INTERVAL_SECONDS = 2.0
@@ -381,4 +390,4 @@ LOG_LEVEL = "INFO"
 
 # ------------------------------------------------------------------------------
 
-CONFIG_VERSION = "13"
+CONFIG_VERSION = "14"

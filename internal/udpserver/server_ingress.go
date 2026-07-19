@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -55,12 +55,16 @@ func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacke
 	// is pre-ordered AEAD-first (see SetCodecSet), so iterating from index 0 tries
 	// authenticated methods before any unauthenticated one and costs a single
 	// attempt for the common single-method deployment.
-	vpnPacket, _, err := VpnProto.ParseInflatedFromLabelsAny(decision.Labels, s.codecs, 0)
+	startIdx := int(s.preferredCodec.Load())
+	vpnPacket, codecIdx, err := VpnProto.ParseInflatedFromLabelsAny(decision.Labels, s.codecs, startIdx)
 	if err != nil {
 		if errors.Is(err, VpnProto.ErrInvalidFragmentInfo) {
 			s.fragmentInvalidHeader.Add(1)
 		}
 		return s.buildNoDataResponseLiteLogged(packet, parsed, "vpn-proto-parse-failed")
+	}
+	if codecIdx != startIdx {
+		s.preferredCodec.Store(int32(codecIdx))
 	}
 
 	if vpnPacket.PacketType == Enums.PACKET_SESSION_CLOSE {
