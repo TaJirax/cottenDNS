@@ -449,12 +449,32 @@ With `ENCRYPTION_AUTO_DETECT = true` (server default) the server builds a codec 
 
 ### 🔐 Encrypted Resolver Transports (DoT / DoH)
 
-Encrypts the **client → resolver** hop so the tunnel looks like ordinary encrypted
-DNS. Opt-in; `auto` never turns these on by itself.
+#### Why this exists
 
-**Using a public resolver — no server change, no redeploy.** Keep the resolver
-list you already have and switch one key. There is no separate "DoH URL" to add:
-the endpoint is built from each resolver IP plus the transport's port and path.
+The tunnel payload has always been encrypted end to end. That protects the
+*contents* — but not the *shape*. A censor does not need to read your traffic to
+act on it: plain DNS on port 53 is readable on the wire, and the volume and timing
+of a tunnel's queries stand out. On networks that treat any heavy port-53 traffic
+as suspicious, the tunnel is **visible even though it is unreadable**, and gets
+throttled or poisoned on that basis alone.
+
+DoT and DoH close that gap by encrypting the remaining plaintext hop — the one
+between the client and its resolver:
+
+```
+before   client ──plain DNS on 53───► resolver ──► server     visible as "lots of DNS"
+after    client ══DoT/DoH (TLS)══════► resolver ──► server     looks like normal encrypted DNS
+```
+
+To an observer the client is now just a device using Cloudflare or Google for DNS,
+which is unremarkable. **This buys traffic shape, not secrecy** — the payload was
+already encrypted, so the point is blending in, not protection.
+
+#### How it works
+
+Nothing about your resolver list changes. There is no separate "DoH URL" to add:
+the endpoint is built from each resolver IP plus the transport's port and path, so
+`1.1.1.1` becomes `https://1.1.1.1:443/dns-query`. Switch one key:
 
 ```toml
 # client_config.toml
@@ -465,14 +485,38 @@ RESOLVER_TRANSPORT = "doh"      # or "dot"
 1.1.1.1
 1.0.0.1
 ```
-The resolver then reaches your tunnel server through the normal NS delegation,
-exactly as it does over plain UDP/53. Cloudflare (`1.1.1.1`, `1.0.0.1`), Google
-(`8.8.8.8`, `8.8.4.4`) and Quad9 (`9.9.9.9`) publish certificates carrying their
-**IP as a SAN**, so they validate with no extra configuration and can be mixed
-freely (all use `/dns-query` on 443).
 
-**If the encrypted port is blocked**, the client falls back to **UDP → TCP/53** on
-its own, so enabling this can never leave you worse off than before.
+The resolver decrypts the query and then reaches your tunnel server over ordinary
+port-53 DNS through your NS delegation — exactly as it does today:
+
+```
+client ══DoH/TLS══► 1.1.1.1 ──plain DNS on 53──► your server
+        encrypted             unchanged
+```
+
+Cloudflare (`1.1.1.1`, `1.0.0.1`), Google (`8.8.8.8`, `8.8.4.4`) and Quad9
+(`9.9.9.9`) publish certificates carrying their **IP as a SAN**, so they validate
+with no extra configuration and can be mixed freely (all use `/dns-query` on 443).
+
+#### Your server does not need to change
+
+Because the resolver still talks to your server over plain DNS, **the server sees
+identical traffic to today and needs no upgrade, no new port, and no certificate.**
+The DoT/DoH *listeners* described below are a separate, optional feature for a
+different setup, and they are **off by default** — no preset enables them.
+
+#### It can never make things worse
+
+These transports are strictly opt-in: `auto` never escalates into them, because
+they exist to disguise a *working* resolver hop, not to rescue a broken one. And
+choosing one is not a one-way door — if the encrypted port is blocked (a common
+censorship response) the client falls back on its own:
+
+```
+dot / doh  ──►  UDP/53  ──►  TCP/53
+```
+
+So the worst case is that you end up exactly where you were before.
 
 | Key (client) | Default | Purpose |
 | --- | --- | --- |
@@ -487,9 +531,51 @@ its own, so enabling this can never leave you worse off than before.
 > using a different path needs its own profile. Resolver entries are IPs, not
 > hostnames.
 
-To point clients **directly at this server** instead of a public resolver, enable
-`DOT_LISTENER_ENABLED` / `DOH_LISTENER_ENABLED` server-side — see
-[Server Setup](#server-setup) and [Engineering Notes §17](docs/ENGINEERING_CHANGES.md).
+#### Optional: run your own DoT/DoH endpoint
+
+Everything above routes through a public resolver, which is the recommended setup.
+You can instead point clients **straight at this server**, so it answers DoT/DoH
+itself with no third party in the middle:
+
+```toml
+# server_config.toml — both off by default, no preset enables them
+DOT_LISTENER_ENABLED = true    # binds :853
+DOH_LISTENER_ENABLED = true    # serves DoH
+```
+
+TLS material resolves **`TLS_CERT_FILE`/`TLS_KEY_FILE` → ACME (Let's Encrypt) →
+self-signed**, so an enabled listener always starts. If it falls back to
+self-signed, set `RESOLVER_TLS_PIN` on the client to trust that certificate
+exactly; that is safer than disabling verification.
+
+**Weigh this against the public-resolver route.** Running your own endpoint means
+an extra exposed port, a certificate to maintain, and — most importantly — clients
+connecting *directly to your server's IP* instead of hiding behind a public
+recursor. On a hostile network that makes the server easier to find and block. The
+public-resolver route keeps your server exactly as exposed as it is today.
+
+##### Sharing port 443 with a panel
+
+Only one process can bind `:443`, which matters if 3x-ui, Hiddify, nginx or
+similar is already on the box. `DOH_COEXIST_MODE` decides who owns it:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` *(default)* | **Never binds `:443`.** Serves DoH on `DOH_BEHIND_PORT` (8453) and your panel's own front (Xray fallback / nginx / Caddy) forwards the DoH route to it. The panel keeps the handshake, so every inbound it supports — VMess/VLESS/Trojan, xhttp/gRPC/raw/ws/tls, CDN-fronted — keeps working untouched. WireGuard is UDP and is unaffected either way. |
+| `front` | CottenDNS owns `:443`, terminates TLS for `DOMAIN`, and transparently forwards every other connection (by TLS SNI) to `DOH_SHARE_BACKEND`, where the panel now listens. |
+| `behind` | Same as `auto`, stated explicitly. |
+
+`auto` resolves to "never take the port" on purpose: claiming `:443`
+opportunistically would mean a panel installed **later** fails to bind it. Taking
+the port is always a deliberate choice. The SNI router carries the same bias — a
+connection it cannot confidently identify as ours is handed to the panel rather
+than dropped.
+
+The encrypted listeners also draw from a capped share of the connection budget
+(`ENCRYPTED_MAX_CONNS`, default ¾ of `TCP_MAX_CONNS`), so flooding them can never
+starve the plain **TCP/53** path the tunnel falls back to.
+
+Full design rationale: [Engineering Notes §17](docs/ENGINEERING_CHANGES.md).
 
 ### 📦 Compression Methods
 
