@@ -9,10 +9,42 @@ package udpserver
 
 import (
 	"net"
+	"runtime"
 	"testing"
 
 	"cottendns-go/internal/config"
 )
+
+// Sockets must never outnumber readers, or a socket would sit unread. They must
+// also stay at or below the CPU count: extra queues past the cores that drain
+// them buy nothing and multiply SO_RCVBUF memory. Crucially, when readers
+// exceed the cap the surplus readers double up on shared sockets, so a single
+// heavy flow is never pinned to one reader's worth of decrypt.
+func TestUDPSocketCountNeverStarvesOrOversubscribes(t *testing.T) {
+	cpus := runtime.NumCPU()
+	for _, readers := range []int{0, 1, 2, 3, 7, 16, 64, 512} {
+		got := udpSocketCount(readers)
+
+		if got < 1 {
+			t.Fatalf("readers=%d: socket count %d, must be at least 1", readers, got)
+		}
+		if readers >= 1 && got > readers {
+			t.Fatalf("readers=%d: %d sockets would leave sockets unread", readers, got)
+		}
+		if got > cpus {
+			t.Fatalf("readers=%d: %d sockets exceeds %d CPUs", readers, got, cpus)
+		}
+	}
+
+	if udpSocketCount(1) != 1 {
+		t.Fatal("a single reader must use exactly one socket")
+	}
+	// Far more readers than cores must collapse onto the CPU cap, leaving
+	// multiple readers per socket rather than one flow per reader.
+	if got := udpSocketCount(cpus * 8); got != cpus {
+		t.Fatalf("readers=%d: socket count %d, want the CPU cap %d", cpus*8, got, cpus)
+	}
+}
 
 // freeUDPPort reserves an ephemeral port and releases it, so the reuse-port
 // sockets under test can all bind one concrete port. Port 0 cannot be used

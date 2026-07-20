@@ -64,7 +64,12 @@ func (s *Server) tcpServerOptions() tcpServerOptions {
 // by its own goroutine that reads length-prefixed queries and writes
 // length-prefixed responses. Returns when the listener is closed.
 func (s *Server) serveTCP(ctx context.Context, host string, port int) error {
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, itoaPort(port)))
+	// Plain DNS-over-TCP/53 only. The DoT/DoH listeners deliberately keep a
+	// single socket: they may be coexisting with a panel behind the SNI router
+	// on 443, and multiplying listeners there would interact with that
+	// hand-off for no gain, since TLS connections are long-lived and accept
+	// rate is not their bottleneck.
+	ln, err := s.listenTCPShared(net.JoinHostPort(host, itoaPort(port)), udpSocketCount(s.cfg.UDPReaders))
 	if err != nil {
 		return err
 	}

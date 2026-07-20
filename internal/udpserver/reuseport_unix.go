@@ -33,22 +33,40 @@ import (
 // reusePortSupported reports whether this build can open SO_REUSEPORT sockets.
 const reusePortSupported = true
 
-func listenUDPReusePort(addr *net.UDPAddr) (*net.UDPConn, error) {
-	lc := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			var ctrlErr error
-			if err := c.Control(func(fd uintptr) {
-				if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
-					ctrlErr = err
-					return
-				}
-				ctrlErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
-			}); err != nil {
-				return err
-			}
-			return ctrlErr
-		},
+// reusePortControl sets the socket options that let several sockets share one
+// address. SO_REUSEPORT is the load-balancing one; SO_REUSEADDR is set
+// alongside it because a listener may otherwise be refused while a previous
+// socket for the address lingers in TIME_WAIT.
+func reusePortControl(_, _ string, c syscall.RawConn) error {
+	var ctrlErr error
+	if err := c.Control(func(fd uintptr) {
+		if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
+			ctrlErr = err
+			return
+		}
+		ctrlErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+	}); err != nil {
+		return err
 	}
+	return ctrlErr
+}
+
+// listenTCPReusePort opens one of several TCP listeners sharing an address. The
+// kernel gives each its own accept queue and assigns an incoming connection to
+// one of them at SYN time, so N accept loops no longer contend for a single
+// queue.
+//
+// Caveat worth knowing: if one of these listeners is closed while its siblings
+// stay open, connections already sitting in that listener's accept queue are
+// reset rather than redistributed. That is acceptable here because the whole
+// set is only ever closed together, at shutdown.
+func listenTCPReusePort(address string) (net.Listener, error) {
+	lc := net.ListenConfig{Control: reusePortControl}
+	return lc.Listen(context.Background(), "tcp", address)
+}
+
+func listenUDPReusePort(addr *net.UDPAddr) (*net.UDPConn, error) {
+	lc := net.ListenConfig{Control: reusePortControl}
 
 	pc, err := lc.ListenPacket(context.Background(), "udp", addr.String())
 	if err != nil {
