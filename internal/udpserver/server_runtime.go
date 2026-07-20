@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 
@@ -38,17 +39,46 @@ func (s *Server) startDNSWorkers(ctx context.Context, reqCh <-chan request, work
 }
 
 // listenUDP opens the listening sockets. With SO_REUSEPORT available it opens
-// one per reader so each gets its own kernel receive queue; otherwise, or if
-// opening the full set fails for any reason, it returns a single shared socket
-// and every reader takes turns on it (the behaviour that shipped before).
-// Partial sets are never returned: an unbalanced set would leave some readers
-// contending while others run free, so anything short of the full count is torn
-// down in favour of the predictable single-socket path.
+// udpSocketCount decides how many SO_REUSEPORT sockets to open for a given
+// reader count. It is deliberately not one-per-reader.
+//
+// The kernel hashes each datagram to a socket by its 4-tuple, so every packet of
+// one flow lands on the same socket and is therefore served by whichever readers
+// sit on it. With a strict one-socket-per-reader split, a single heavy flow gets
+// exactly one reader -- and the reader is not a cheap memcpy, it runs
+// admitIngressPacket, which attempts decryption. That would make one busy client
+// slower than it was on the old shared socket, where all readers could pull from
+// the same queue. Capping sockets below the reader count leaves the surplus
+// readers doubled up on shared sockets, so no flow is ever pinned to a single
+// CPU's worth of decrypt.
+//
+// The cap is the CPU count because queue-splitting past the number of cores that
+// can drain those queues buys nothing and only multiplies SO_RCVBUF memory.
+func udpSocketCount(readers int) int {
+	if readers < 2 {
+		return 1
+	}
+	if cpus := runtime.NumCPU(); readers > cpus {
+		if cpus < 1 {
+			return 1
+		}
+		return cpus
+	}
+	return readers
+}
+
+// listenUDP opens the listening sockets. With SO_REUSEPORT available it opens
+// several so each gets its own kernel receive queue; otherwise, or if opening
+// the full set fails for any reason, it returns a single shared socket and every
+// reader takes turns on it (the behaviour that shipped before). Partial sets are
+// never returned: an unbalanced set would leave some readers contending while
+// others run free, so anything short of the full count is torn down in favour of
+// the predictable single-socket path.
 func (s *Server) listenUDP(addr *net.UDPAddr) ([]*net.UDPConn, error) {
-	readers := s.cfg.UDPReaders
-	if reusePortSupported && readers > 1 {
-		conns := make([]*net.UDPConn, 0, readers)
-		for range readers {
+	sockets := udpSocketCount(s.cfg.UDPReaders)
+	if reusePortSupported && sockets > 1 {
+		conns := make([]*net.UDPConn, 0, sockets)
+		for range sockets {
 			conn, err := listenUDPReusePort(addr)
 			if err != nil {
 				for _, opened := range conns {
@@ -59,7 +89,7 @@ func (s *Server) listenUDP(addr *net.UDPAddr) ([]*net.UDPConn, error) {
 			}
 			conns = append(conns, conn)
 		}
-		if len(conns) == readers {
+		if len(conns) == sockets {
 			return conns, nil
 		}
 		if s.log != nil {

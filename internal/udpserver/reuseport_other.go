@@ -22,3 +22,7 @@ const reusePortSupported = false
 func listenUDPReusePort(_ *net.UDPAddr) (*net.UDPConn, error) {
 	return nil, errReusePortUnsupported
 }
+
+func listenTCPReusePort(_ string) (net.Listener, error) {
+	return nil, errReusePortUnsupported
+}
