@@ -115,10 +115,30 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 }
 
 func (c *Client) sendOneWayDNSQuery(resolver Connection, packet []byte, deadline time.Time) error {
-	if c.useTCP.Load() {
-		// Best-effort one-shot DNS-over-TCP (e.g. the session-close burst).
-		d := net.Dialer{Timeout: time.Until(deadline)}
-		conn, err := d.Dial("tcp", resolver.ResolverLabel)
+	if c.usesStreamTransport() {
+		// Best-effort one-shot over the active stream transport (e.g. the
+		// session-close burst). DoH has no one-way form, so it reuses the normal
+		// request/response exchanger and discards the answer.
+		if c.activeTransport() == transportDoH {
+			transport, err := c.newDoHQueryTransport(resolver.ResolverLabel)
+			if err != nil {
+				return err
+			}
+			defer transport.Close()
+			_, err = transport.exchange(packet, time.Until(deadline))
+			return err
+		}
+
+		var (
+			conn net.Conn
+			err  error
+		)
+		if c.activeTransport() == transportDoT {
+			conn, err = c.dialDoTResolver(resolver.ResolverLabel, time.Until(deadline))
+		} else {
+			d := net.Dialer{Timeout: time.Until(deadline)}
+			conn, err = d.Dial("tcp", resolver.ResolverLabel)
+		}
 		if err != nil {
 			return err
 		}
@@ -291,8 +311,8 @@ func (t *udpQueryTransport) Close() error {
 func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeout time.Duration) (VpnProto.Packet, error) {
 	var response []byte
 
-	if c.useTCP.Load() {
-		transport, err := newTCPQueryTransport(conn.ResolverLabel, tcpQueryDialTimeout)
+	if c.usesStreamTransport() {
+		transport, err := c.newQueryTransport(conn.ResolverLabel)
 		if err != nil {
 			return VpnProto.Packet{}, err
 		}

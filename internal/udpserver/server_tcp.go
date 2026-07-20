@@ -68,14 +68,24 @@ func (s *Server) serveTCP(ctx context.Context, host string, port int) error {
 	if err != nil {
 		return err
 	}
+	limited := newLimitedListenerWithBudget(ln, s.streamConnBudget, s.cfg.TCPMaxConns, s.cfg.TCPMaxConnsPerIP)
+	return s.serveDNSOverStream(ctx, limited, "TCP")
+}
 
+// serveDNSOverStream runs the connection-oriented DNS accept loop on an already
+// opened listener until ctx is cancelled. It is transport-agnostic: the plain
+// TCP/53 listener and the TLS-wrapped DoT listener both feed it, so DoT inherits
+// TCP's framing, per-IP limits, and load-shedding for free. transportName is
+// only used for logging.
+func (s *Server) serveDNSOverStream(ctx context.Context, ln net.Listener, transportName string) error {
 	maxConns := s.cfg.TCPMaxConns
 	if maxConns <= 0 {
 		maxConns = 2048
 	}
 
 	s.log.Infof(
-		"\U0001F4E1 <green>TCP Listener Ready, Addr: <cyan>%s</cyan>, MaxConns: <cyan>%d</cyan></green>",
+		"\U0001F4E1 <green>%s Listener Ready, Addr: <cyan>%s</cyan>, MaxConns: <cyan>%d</cyan></green>",
+		transportName,
 		ln.Addr().String(),
 		maxConns,
 	)

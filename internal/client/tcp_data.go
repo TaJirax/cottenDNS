@@ -29,9 +29,24 @@ const (
 	tcpDataWriteTimeout = 10 * time.Second
 )
 
+// streamDataTransport is the data-plane contract shared by every persistent
+// (non-UDP) resolver transport. TCP and DoT are served by tcpDataManager — DoT
+// is the same length-prefixed framing, only dialed over TLS — while DoH has its
+// own request/response implementation. The dispatcher only ever sees this
+// interface, so adding a transport does not touch the send path.
+type streamDataTransport interface {
+	Start(ctx context.Context)
+	Stop()
+	Send(serverKey string, addr *net.UDPAddr, packet []byte, now time.Time)
+}
+
 type tcpDataManager struct {
 	client *Client
 	ctx    context.Context
+	// dial opens one connection to a resolver. Swapping it is the only difference
+	// between plain TCP/53 and DoT, so both share every other line in this file.
+	dial      func(addr *net.UDPAddr) (net.Conn, error)
+	transport string // for logs: "TCP/53" or "DoT"
 
 	mu    sync.Mutex
 	conns map[string]*tcpDataConn // keyed by resolver address string
@@ -49,7 +64,29 @@ type tcpDataConn struct {
 }
 
 func newTCPDataManager(c *Client) *tcpDataManager {
-	return &tcpDataManager{client: c, conns: make(map[string]*tcpDataConn)}
+	return &tcpDataManager{
+		client:    c,
+		conns:     make(map[string]*tcpDataConn),
+		transport: "TCP/53",
+		dial: func(addr *net.UDPAddr) (net.Conn, error) {
+			d := net.Dialer{Timeout: tcpDataDialTimeout}
+			return d.Dial("tcp", net.JoinHostPort(addr.IP.String(), itoaInt(addr.Port)))
+		},
+	}
+}
+
+// newDoTDataManager reuses the TCP data plane over TLS. DoT is DNS-over-TCP
+// framing inside TLS, so only the dial changes: the connection pooling, framing,
+// read loop and rxChannel hand-off are all shared with TCP/53.
+func newDoTDataManager(c *Client) *tcpDataManager {
+	return &tcpDataManager{
+		client:    c,
+		conns:     make(map[string]*tcpDataConn),
+		transport: "DoT",
+		dial: func(addr *net.UDPAddr) (net.Conn, error) {
+			return c.dialDoTResolver(addr.String(), tcpDataDialTimeout)
+		},
+	}
 }
 
 func (m *tcpDataManager) Start(ctx context.Context) {
@@ -117,10 +154,8 @@ func (m *tcpDataManager) connFor(addr *net.UDPAddr) (*tcpDataConn, error) {
 	}
 	m.mu.Unlock()
 
-	// Dial outside the lock (network I/O); resolve UDP resolver addr to TCP.
-	d := net.Dialer{Timeout: tcpDataDialTimeout}
-	tcpAddr := net.JoinHostPort(addr.IP.String(), itoaInt(addr.Port))
-	conn, err := d.Dial("tcp", tcpAddr)
+	// Dial outside the lock (network I/O). The dialer decides TCP vs TLS(DoT).
+	conn, err := m.dial(addr)
 	if err != nil {
 		return nil, err
 	}

@@ -16,10 +16,13 @@
 package client
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,17 +34,116 @@ type queryExchanger interface {
 	Close() error
 }
 
+// resolverTransport is the client-wide active transport for the resolver hop.
+// It is stored as an atomic int32 on the Client so every path (MTU probe,
+// session init, health recheck, data plane) dispatches on one value.
+type resolverTransport int32
+
+const (
+	transportUDP resolverTransport = iota
+	transportTCP
+	transportDoT
+	transportDoH
+)
+
+func (t resolverTransport) String() string {
+	switch t {
+	case transportTCP:
+		return "TCP/53"
+	case transportDoT:
+		return "DoT"
+	case transportDoH:
+		return "DoH"
+	default:
+		return "UDP/53"
+	}
+}
+
+// resolverTransportFromName maps a RESOLVER_TRANSPORT value to the transport the
+// client starts on. "auto" starts on UDP and is escalated to TCP by the fallback
+// in RunInitialMTUTests.
+func resolverTransportFromName(name string) resolverTransport {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "tcp":
+		return transportTCP
+	case "dot":
+		return transportDoT
+	case "doh":
+		return transportDoH
+	default:
+		return transportUDP
+	}
+}
+
+// activeTransport reports the transport currently in force.
+func (c *Client) activeTransport() resolverTransport {
+	return resolverTransport(c.transport.Load())
+}
+
+func (c *Client) setActiveTransport(t resolverTransport) {
+	c.transport.Store(int32(t))
+}
+
+// usesStreamTransport reports whether the data plane runs over persistent
+// per-resolver connections (TCP/DoT/DoH) instead of the UDP socket readers.
+func (c *Client) usesStreamTransport() bool {
+	return c.activeTransport() != transportUDP
+}
+
 // newQueryTransport opens a synchronous query transport to resolverLabel using
-// the client's active transport (UDP, or TCP when useTCP is set).
+// the client's active transport.
 func (c *Client) newQueryTransport(resolverLabel string) (queryExchanger, error) {
-	if c.useTCP.Load() {
+	switch c.activeTransport() {
+	case transportDoH:
+		return c.newDoHQueryTransport(resolverLabel)
+	case transportDoT:
+		conn, err := c.dialDoTResolver(resolverLabel, tcpQueryDialTimeout)
+		if err != nil {
+			return nil, err
+		}
+		// DoT is the TCP/53 wire format inside TLS, so the framing exchanger is
+		// reused verbatim — only the dial differs.
+		return &tcpQueryTransport{conn: conn}, nil
+	case transportTCP:
 		return newTCPQueryTransport(resolverLabel, tcpQueryDialTimeout)
+	default:
+		conn, err := dialUDPResolver(resolverLabel)
+		if err != nil {
+			return nil, err
+		}
+		return &udpQueryTransport{client: c, conn: conn}, nil
 	}
-	conn, err := dialUDPResolver(resolverLabel)
+}
+
+// dialDoTResolver opens a TLS connection to a resolver's DoT port. The resolver
+// is addressed by IP, so the port from the resolver label is replaced by
+// RESOLVER_DOT_PORT and the SNI/verification name comes from configuration.
+func (c *Client) dialDoTResolver(resolverLabel string, timeout time.Duration) (net.Conn, error) {
+	target := resolverHostWithPort(resolverLabel, c.cfg.ResolverDoTPort)
+	tlsCfg := c.resolverTLSConfig()
+	if tlsCfg.ServerName == "" {
+		// No configured name: fall back to the host we are dialing so SNI is at
+		// least well-formed (an IP here means the cert needs an IP SAN or a pin).
+		host, _, err := net.SplitHostPort(target)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg = tlsCfg.Clone()
+		tlsCfg.ServerName = host
+	}
+	dialer := &net.Dialer{Timeout: timeout}
+	return tls.DialWithDialer(dialer, "tcp", target, tlsCfg)
+}
+
+// resolverHostWithPort rewrites a "host:port" resolver label to use port instead.
+// Resolver entries carry the DNS port (53); the encrypted transports live on
+// their own ports, so the host is what carries over, not the port.
+func resolverHostWithPort(resolverLabel string, port int) string {
+	host, _, err := net.SplitHostPort(resolverLabel)
 	if err != nil {
-		return nil, err
+		host = resolverLabel
 	}
-	return &udpQueryTransport{client: c, conn: conn}, nil
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // tcpQueryTransport wraps a single persistent TCP connection to a resolver and

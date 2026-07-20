@@ -61,6 +61,88 @@ TCP_MAX_CONNS = 2048
 # DNS-over-TCP connections useful. TCP_MAX_QUERIES_PER_CONN = 0 means unlimited.
 TCP_MAX_CONNS_PER_IP = 128
 TCP_MAX_QUERIES_PER_CONN = 0
+
+# Encrypted-DNS listeners (optional). DoT (DNS-over-TLS, RFC 7858) and DoH
+# (DNS-over-HTTPS, RFC 8484) let the client disguise the tunnel as ordinary
+# encrypted DNS on networks that fingerprint plain UDP/TCP 53. They are NOT part
+# of the fallback chain: a client only uses them when it selects that transport,
+# and falls back to UDP/TCP 53 itself if they fail. Both share one TLS cert,
+# resolved as: TLS_CERT_FILE/TLS_KEY_FILE -> ACME/Let's Encrypt for DOMAIN ->
+# self-signed. Off by default (they need a reachable TLS port and, for ACME,
+# port 443 + DOMAIN pointing at this server).
+DOT_LISTENER_ENABLED = false
+DOT_LISTEN_HOST = "0.0.0.0"
+DOT_LISTEN_PORT = 853
+DOH_LISTENER_ENABLED = false
+DOH_LISTEN_HOST = "0.0.0.0"
+DOH_LISTEN_PORT = 443
+DOH_PATH = "/dns-query"
+
+# How DoH coexists on 443 with a panel (3x-ui, Hiddify, ...). Only one process
+# can bind 443, so pick the model that fits your setup:
+#
+#  A) DOH_TLS_ENABLED = false  — "behind the panel" (recommended, universal).
+#     The panel's own front (Xray fallback / nginx / Caddy) keeps 443, terminates
+#     TLS, and forwards the DoH route to CottenDNS on a LOCAL port. Set
+#     DOH_LISTEN_PORT to a local port (e.g. 8453) and set
+#     DOH_LISTEN_HOST=127.0.0.1. Keep UDP_HOST public for UDP/TCP 53. Because the panel's front handles the connection,
+#     EVERY inbound it supports keeps working untouched — VMess/VLESS/Trojan,
+#     xhttp/gRPC/raw/ws/tls, CDN-fronted, and WireGuard (which is UDP and never
+#     touches this TCP listener). CottenDNS serves cleartext HTTP/1.1 + h2c here.
+#
+#  B) DOH_TLS_ENABLED = true + DOH_SHARE_BACKEND set — "in front of the panel".
+#     CottenDNS owns 443, terminates TLS, serves DoH for the DOMAIN(s) above, and
+#     transparently splices every other connection (by TLS SNI) to the backend
+#     where the panel now listens (e.g. 127.0.0.1:8443). Use a DEDICATED DoH
+#     subdomain so the panel's own domains are never captured. Fail-safe: anything
+#     not clearly ours goes to the backend, so this never takes 443 from the panel.
+#
+# Per-IP/global connection limits (TCP_MAX_CONNS*) apply to DoH in both modes.
+#
+# DOH_COEXIST_MODE picks between them:
+#   "auto"   (default) resolves to model A — CottenDNS never binds the TLS port
+#            at all, so it cannot disturb anything and a panel can always install
+#            and take 443 cleanly, before or after CottenDNS. DoH is served on
+#            DOH_BEHIND_PORT; point the panel's front at it.
+#   "front"  model B — explicitly take the TLS port and SNI-share it. Owning 443
+#            is always a deliberate choice, never a default, because once we hold
+#            it a panel installed later would fail to bind.
+#   "behind" model A, stated explicitly.
+DOH_COEXIST_MODE = "auto"
+DOH_BEHIND_PORT = 8453
+
+DOH_TLS_ENABLED = true
+DOH_SHARE_BACKEND = ""
+# Enable only when the backend is configured to accept PROXY protocol v1. It
+# preserves the real source/destination address across CottenDNS's TCP splice.
+DOH_SHARE_PROXY_PROTOCOL = false
+
+# How many of TCP_MAX_CONNS the DoT/DoH listeners may hold at once. The remainder
+# stays permanently reserved for plain DNS-over-TCP/53, so flooding the optional
+# encrypted listeners can never starve the survival fallback. 0 = three quarters.
+ENCRYPTED_MAX_CONNS = 0
+
+# Dedicated DoH flood budgets. These are intentionally independent of the UDP
+# worker queue: 256 x the normal 4096-byte packet ceiling is small, and the
+# aggregate byte gate remains capped at 64 MiB if packet sizing changes.
+DOH_MAX_INFLIGHT = 256
+DOH_MAX_INFLIGHT_BYTES = 67108864
+DOH_REQUESTS_PER_SECOND_PER_IP = 4096
+DOH_REQUEST_BURST_PER_IP = 8192
+# Only peers in this list may supply X-Forwarded-For/X-Real-IP. When DoH is
+# behind a local reverse proxy, use loopback; otherwise leave empty.
+DOH_TRUSTED_PROXY_CIDRS = []
+
+# TLS material for DoT/DoH. Leave the cert files empty to let ACME obtain a real
+# certificate for DOMAIN automatically (best disguise); if ACME cannot run, a
+# self-signed cert is generated so the listener still starts (the client then
+# pins its fingerprint or skips verification — the tunnel payload is AEAD-
+# encrypted regardless, so this never exposes traffic).
+TLS_CERT_FILE = ""
+TLS_KEY_FILE = ""
+ACME_ENABLED = true
+ACME_CACHE_DIR = "acme-cache"
+ACME_EMAIL = ""
 TCP_READ_IDLE_TIMEOUT_SECONDS = 30.0
 TCP_WRITE_TIMEOUT_SECONDS = 15.0
 

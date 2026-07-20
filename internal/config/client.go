@@ -64,7 +64,27 @@ type ClientConfig struct {
 	//                       testing, retry the whole fleet over TCP/53.
 	//   "udp"            — UDP only (legacy).
 	//   "tcp"            — TCP/53 only (for networks that block UDP/53).
-	ResolverTransport                     string  `toml:"RESOLVER_TRANSPORT"`
+	//   "dot"            — DNS-over-TLS (RFC 7858), normally :853.
+	//   "doh"            — DNS-over-HTTPS (RFC 8484), normally :443.
+	//
+	// DoT/DoH are opt-in disguise transports, never something "auto" escalates
+	// into: they exist to make the resolver hop look like ordinary encrypted DNS
+	// where plain 53 is fingerprinted. Selecting one and having it fail is not
+	// fatal — the client falls back to UDP and then TCP/53 on its own, so a
+	// blocked TLS port degrades to the survival path instead of no tunnel.
+	ResolverTransport string `toml:"RESOLVER_TRANSPORT"`
+	// Encrypted-resolver settings, used only by the dot/doh transports.
+	// ResolverTLSServerName is the SNI + certificate name presented to the
+	// resolver (leave empty to use the resolver IP itself). ResolverTLSPin is an
+	// optional base64 SHA-256 of the server certificate's SubjectPublicKeyInfo:
+	// set it to trust a self-signed server without disabling verification.
+	ResolverTLSServerName         string `toml:"RESOLVER_TLS_SERVER_NAME"`
+	ResolverTLSPin                string `toml:"RESOLVER_TLS_PIN"`
+	ResolverTLSInsecureSkipVerify bool   `toml:"RESOLVER_TLS_INSECURE_SKIP_VERIFY"`
+	ResolverDoTPort               int    `toml:"RESOLVER_DOT_PORT"`
+	ResolverDoHPort               int    `toml:"RESOLVER_DOH_PORT"`
+	ResolverDoHPath               string `toml:"RESOLVER_DOH_PATH"`
+
 	UploadPacketDuplicationCount          int     `toml:"UPLOAD_PACKET_DUPLICATION_COUNT"`
 	DownloadPacketDuplicationCount        int     `toml:"DOWNLOAD_PACKET_DUPLICATION_COUNT"`
 	UploadSetupPacketDuplicationCount     int     `toml:"UPLOAD_SETUP_PACKET_DUPLICATION_COUNT"`
@@ -283,6 +303,9 @@ func defaultClientConfig() ClientConfig {
 		QNameLabelLength:                      63,
 		ResolverRateLimitEnabled:              true,
 		ResolverTransport:                     "auto",
+		ResolverDoTPort:                       853,
+		ResolverDoHPort:                       443,
+		ResolverDoHPath:                       "/dns-query",
 		UploadPacketDuplicationCount:          3,
 		DownloadPacketDuplicationCount:        7,
 		UploadSetupPacketDuplicationCount:     4,
@@ -594,8 +617,17 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		cfg.ResolverTransport = "udp"
 	case "tcp":
 		cfg.ResolverTransport = "tcp"
+	case "dot":
+		cfg.ResolverTransport = "dot"
+	case "doh":
+		cfg.ResolverTransport = "doh"
 	default:
-		return cfg, fmt.Errorf("invalid RESOLVER_TRANSPORT: %q (want auto|udp|tcp)", cfg.ResolverTransport)
+		return cfg, fmt.Errorf("invalid RESOLVER_TRANSPORT: %q (want auto|udp|tcp|dot|doh)", cfg.ResolverTransport)
+	}
+	cfg.ResolverDoTPort = clampInt(defaultIntBelow(cfg.ResolverDoTPort, 1, 853), 1, 65535)
+	cfg.ResolverDoHPort = clampInt(defaultIntBelow(cfg.ResolverDoHPort, 1, 443), 1, 65535)
+	if cfg.ResolverDoHPath == "" || cfg.ResolverDoHPath[0] != '/' {
+		cfg.ResolverDoHPath = "/dns-query"
 	}
 
 	cfg.UploadPacketDuplicationCount = clampInt(defaultIntBelow(cfg.UploadPacketDuplicationCount, 1, 3), 1, 8)

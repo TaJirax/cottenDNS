@@ -159,13 +159,15 @@ type Client struct {
 	tunnelProcessWorkers int
 	tunnelPacketTimeout  time.Duration
 
-	// useTCP reports the active resolver transport. It starts false (UDP) and is
-	// set true when RESOLVER_TRANSPORT is "tcp", or by the "auto" fallback when a
-	// full UDP MTU scan finds zero usable resolvers. All query paths (probe,
-	// session-init, health, data plane) dispatch on it. tcpData carries the
-	// persistent per-resolver TCP connections used by the data plane in TCP mode.
-	useTCP  atomic.Bool
-	tcpData *tcpDataManager
+	// transport is the active resolver transport (see resolverTransport). It
+	// starts from RESOLVER_TRANSPORT and may be lowered by the fallback in
+	// RunInitialMTUTests: "auto" escalates UDP->TCP, while the opt-in encrypted
+	// transports (DoT/DoH) fall back to UDP and then TCP/53 if they cannot carry
+	// the tunnel. All query paths (probe, session-init, health, data plane)
+	// dispatch on it. streamData carries the persistent per-resolver connections
+	// used by the data plane whenever the transport is not UDP.
+	transport  atomic.Int32
+	streamData streamDataTransport
 
 	// pacer applies per-resolver adaptive rate limiting (see resolver_pacer.go).
 	pacer *resolverPacer

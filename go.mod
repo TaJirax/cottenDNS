@@ -15,7 +15,11 @@ require (
 	github.com/klauspost/reedsolomon v1.14.1
 	github.com/pierrec/lz4/v4 v4.1.26
 	golang.org/x/crypto v0.49.0
+	golang.org/x/net v0.51.0
 	golang.org/x/sys v0.42.0
 )
 
-require github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+require (
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
+)

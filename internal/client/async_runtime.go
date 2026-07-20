@@ -36,9 +36,9 @@ func (c *Client) StopAsyncRuntime() {
 	if c.asyncCancel != nil {
 		c.log.Debugf("\U0001F6D1 <yellow>Stopping Async Runtime...</yellow>")
 		c.asyncCancel()
-		if c.tcpData != nil {
-			c.tcpData.Stop()
-			c.tcpData = nil
+		if c.streamData != nil {
+			c.streamData.Stop()
+			c.streamData = nil
 		}
 		c.closeTunnelSockets()
 		c.asyncWG.Wait()
@@ -239,9 +239,9 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 			return
 		}
 		cancel()
-		if c.tcpData != nil {
-			c.tcpData.Stop()
-			c.tcpData = nil
+		if c.streamData != nil {
+			c.streamData.Stop()
+			c.streamData = nil
 		}
 		if c.tcpListener != nil {
 			c.tcpListener.Stop()
@@ -295,10 +295,18 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 	// 6. Spawn ingestion. In UDP mode each socket has a reader worker. In TCP
 	// mode the persistent per-resolver TCP connections feed rxChannel from their
 	// own read loops, so no UDP readers are started.
-	if c.useTCP.Load() {
-		c.tcpData = newTCPDataManager(c)
-		c.tcpData.Start(runtimeCtx)
-		c.log.Infof("\U0001F517 <cyan>Resolver transport: <green>TCP/53</green> (persistent connections)</cyan>")
+	if c.usesStreamTransport() {
+		active := c.activeTransport()
+		switch active {
+		case transportDoH:
+			c.streamData = newDoHDataManager(c)
+		case transportDoT:
+			c.streamData = newDoTDataManager(c)
+		default:
+			c.streamData = newTCPDataManager(c)
+		}
+		c.streamData.Start(runtimeCtx)
+		c.log.Infof("\U0001F517 <cyan>Resolver transport: <green>%s</green></cyan>", active)
 	} else {
 		for i := 0; i < c.tunnelRX_TX_Workers; i++ {
 			c.asyncWG.Add(1)
@@ -651,16 +659,16 @@ func (c *Client) asyncWriterWorker(ctx context.Context, id int, conn *net.UDPCon
 					_ = conn.SetWriteDeadline(lastDeadline)
 				}
 			}
-			useTCP := c.useTCP.Load()
+			useStream := c.usesStreamTransport()
 			for _, frame := range task.frames {
 				if frame.addr == nil || len(frame.packet) == 0 {
 					continue
 				}
-				if useTCP {
-					// TCP mode: route through the persistent per-resolver TCP
-					// connections; Send handles its own send-tracking.
-					if c.tcpData != nil {
-						c.tcpData.Send(frame.serverKey, frame.addr, frame.packet, now)
+				if useStream {
+					// TCP/DoT/DoH: route through the persistent per-resolver
+					// transport; Send handles its own send-tracking.
+					if c.streamData != nil {
+						c.streamData.Send(frame.serverKey, frame.addr, frame.packet, now)
 					}
 					continue
 				}

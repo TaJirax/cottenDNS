@@ -35,6 +35,13 @@ func (s *Server) MetricsHandler() http.Handler {
 		writeMetric("dns_upstream_failures_total", stats.DNSUpstreamFailures)
 		writeMetric("dns_upstream_hedges_total", stats.DNSUpstreamHedges)
 		writeMetric("dns_upstream_tcp_fallbacks_total", stats.DNSUpstreamTCPFallbacks)
+		writeMetric("dot_listener_up", stats.DoTListenerUp)
+		writeMetric("doh_listener_up", stats.DoHListenerUp)
+		writeMetric("tls_handshake_failures_total", stats.TLSHandshakeFailures)
+		writeMetric("encrypted_connection_rejections_total", stats.EncryptedConnRejected)
+		writeMetric("doh_request_rejections_total", stats.DoHRequestRejected)
+		writeMetric("sni_passthrough_active", stats.SNIPassthroughActive)
+		writeMetric("sni_passthrough_failures_total", stats.SNIPassthroughFailures)
 	})
 	return mux
 }

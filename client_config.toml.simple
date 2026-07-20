@@ -159,9 +159,42 @@ RESOLVER_BALANCING_STRATEGY = 3
 #                      Zero cost on UDP-working networks (TCP is never tried).
 #   "udp"            - UDP only (legacy behavior).
 #   "tcp"            - TCP/53 only, for networks that block or truncate UDP/53.
+#   "dot"            - DNS-over-TLS (RFC 7858), normally :853.
+#   "doh"            - DNS-over-HTTPS (RFC 8484), normally :443.
 # The server serves TCP/53 by default (TCP_LISTENER_ENABLED), so no server change
 # is needed to use TCP.
+#
+# DoT/DoH are opt-in DISGUISE transports: they make the resolver hop look like
+# ordinary encrypted DNS where plain 53 is fingerprinted. "auto" never escalates
+# into them — you choose them deliberately. Choosing one is not a commitment
+# though: if the TLS port is blocked (a common censorship response) the client
+# falls back to UDP and then TCP/53 on its own, so you degrade to the survival
+# path instead of losing the tunnel. They require DOT_LISTENER_ENABLED /
+# DOH_LISTENER_ENABLED on the server (both off by default).
 RESOLVER_TRANSPORT = "auto"
+
+# Encrypted-resolver settings (used only by "dot"/"doh").
+# RESOLVER_TLS_SERVER_NAME is the SNI + certificate name presented to the
+# resolver; leave empty to use the resolver IP (which then needs an IP SAN or a
+# pin). Resolver entries keep their DNS port; these ports are used instead.
+RESOLVER_TLS_SERVER_NAME = ""
+RESOLVER_DOT_PORT = 853
+RESOLVER_DOH_PORT = 443
+RESOLVER_DOH_PATH = "/dns-query"
+
+# Trust model, best first:
+#   1. RESOLVER_TLS_PIN - base64 SHA-256 of the server certificate's
+#      SubjectPublicKeyInfo. Pinning replaces CA validation, so a self-signed or
+#      private-CA server is trusted EXACTLY and nothing else is. Accepts a bare
+#      hash or a "sha256/..." prefix. This is the right way to use a server that
+#      fell back to a self-signed certificate.
+#   2. empty pin (default) - normal hostname/CA verification.
+#   3. RESOLVER_TLS_INSECURE_SKIP_VERIFY - last resort, off by default.
+# The tunnel payload is AEAD-encrypted regardless, so option 3 never exposes
+# traffic; prefer pinning anyway, because an unverified hop can be transparently
+# intercepted and that interception is itself a censorship signal.
+RESOLVER_TLS_PIN = ""
+RESOLVER_TLS_INSECURE_SKIP_VERIFY = false
 
 # Per-resolver adaptive rate limiting. When a resolver signals overload (DNS
 # RCODE != 0 — REFUSED/SERVFAIL — or repeated timeouts) it is briefly cooled down

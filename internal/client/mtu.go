@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,47 +79,77 @@ type mtuScanCounters struct {
 	rejectDownload atomic.Int32
 }
 
-// RunInitialMTUTests tests all connections before the client starts. With
-// RESOLVER_TRANSPORT="auto" it probes over UDP first and, if no resolver passes,
-// retries the whole fleet over DNS-over-TCP/53 — so a network that blocks or
-// truncates UDP/53 transparently falls back to TCP. "udp"/"tcp" force a single
-// transport.
+// RunInitialMTUTests tests all connections before the client starts, walking a
+// transport fallback chain until one carries the tunnel:
+//
+//	"udp" / "tcp" — that transport only, no fallback.
+//	"auto"        — UDP, then TCP/53 (a network that blocks or truncates UDP).
+//	"dot" / "doh" — the chosen encrypted transport, then UDP, then TCP/53.
+//
+// The encrypted transports are deliberately *opt-in only*: nothing ever escalates
+// into them, because they exist to disguise the resolver hop, not to rescue a
+// broken one. But choosing one is not a commitment — if the TLS port is blocked
+// (a common censorship response) the client silently degrades to the plain
+// survival transports rather than failing to connect at all.
 func (c *Client) RunInitialMTUTests(ctx context.Context) error {
 	if len(c.connections) == 0 {
 		return ErrNoValidConnections
 	}
 
-	switch c.cfg.ResolverTransport {
-	case "tcp":
-		c.useTCP.Store(true)
-	default: // "udp" or "auto" both start on UDP
-		c.useTCP.Store(false)
-	}
-
-	err := c.runFullMTUTests(ctx)
-	if err == nil {
-		return nil
-	}
-
-	// auto fallback: zero usable resolvers over UDP -> retry the fleet over TCP.
-	if c.cfg.ResolverTransport == "auto" && errors.Is(err, ErrNoValidConnections) && !c.useTCP.Load() {
-		if c.log != nil {
-			c.log.Warnf("<yellow>No resolvers passed over UDP/53 — retrying the whole fleet over TCP/53…</yellow>")
-		}
-		c.useTCP.Store(true)
-		for i := range c.connections {
-			c.prepareConnectionMTUScanState(&c.connections[i])
-		}
-		if tcpErr := c.runFullMTUTests(ctx); tcpErr == nil {
+	chain := resolverTransportChain(c.cfg.ResolverTransport)
+	var firstErr error
+	for i, transport := range chain {
+		c.setActiveTransport(transport)
+		if i > 0 {
 			if c.log != nil {
-				c.log.Infof("<green>✅ Resolver transport fell back to TCP/53.</green>")
+				c.log.Warnf(
+					"<yellow>No resolvers passed over %s — retrying the whole fleet over %s…</yellow>",
+					chain[i-1], transport,
+				)
+			}
+			for idx := range c.connections {
+				c.prepareConnectionMTUScanState(&c.connections[idx])
+			}
+		}
+
+		err := c.runFullMTUTests(ctx)
+		if err == nil {
+			if i > 0 && c.log != nil {
+				c.log.Infof("<green>✅ Resolver transport fell back to %s.</green>", transport)
 			}
 			return nil
 		}
-		// TCP also failed — surface the original error, restore UDP default.
-		c.useTCP.Store(false)
+		if firstErr == nil {
+			firstErr = err
+		}
+		// Only "no usable resolver" is a transport problem worth falling back on;
+		// anything else (cancellation, config) would fail identically elsewhere.
+		if !errors.Is(err, ErrNoValidConnections) {
+			c.setActiveTransport(chain[0])
+			return err
+		}
 	}
-	return err
+
+	// Nothing worked — restore the configured transport so state is predictable.
+	c.setActiveTransport(chain[0])
+	return firstErr
+}
+
+// resolverTransportChain returns the ordered fallback chain for a configured
+// RESOLVER_TRANSPORT value. The first entry is always the configured transport.
+func resolverTransportChain(name string) []resolverTransport {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "udp":
+		return []resolverTransport{transportUDP}
+	case "tcp":
+		return []resolverTransport{transportTCP}
+	case "dot":
+		return []resolverTransport{transportDoT, transportUDP, transportTCP}
+	case "doh":
+		return []resolverTransport{transportDoH, transportUDP, transportTCP}
+	default: // "auto"
+		return []resolverTransport{transportUDP, transportTCP}
+	}
 }
 
 // runFullMTUTests performs the original fully-sequential blocking MTU scan and

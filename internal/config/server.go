@@ -34,24 +34,97 @@ type ServerConfig struct {
 	// TCPListenerEnabled also serves DNS-over-TCP on the same host:port, so
 	// clients on networks that filter or truncate UDP/53 can fall back to TCP/53.
 	// Default true. TCPMaxConns caps concurrent TCP connections (0 = default).
-	TCPListenerEnabled           bool    `toml:"TCP_LISTENER_ENABLED"`
-	TCPMaxConns                  int     `toml:"TCP_MAX_CONNS"`
-	TCPMaxConnsPerIP             int     `toml:"TCP_MAX_CONNS_PER_IP"`
-	TCPMaxQueriesPerConn         int     `toml:"TCP_MAX_QUERIES_PER_CONN"`
-	TCPReadIdleTimeoutSeconds    float64 `toml:"TCP_READ_IDLE_TIMEOUT_SECONDS"`
-	TCPWriteTimeoutSeconds       float64 `toml:"TCP_WRITE_TIMEOUT_SECONDS"`
-	SocketBufferSize             int     `toml:"SOCKET_BUFFER_SIZE"`
-	MaxConcurrentRequests        int     `toml:"MAX_CONCURRENT_REQUESTS"`
-	MaxIngressQueueBytes         int     `toml:"MAX_INGRESS_QUEUE_BYTES"`
-	DNSRequestWorkers            int     `toml:"DNS_REQUEST_WORKERS"`
-	DeferredSessionWorkers       int     `toml:"DEFERRED_SESSION_WORKERS"`
-	DeferredSessionQueueLimit    int     `toml:"DEFERRED_SESSION_QUEUE_LIMIT"`
-	SessionOrphanQueueInitialCap int     `toml:"SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY"`
-	StreamQueueInitialCapacity   int     `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
-	DNSFragmentStoreCapacity     int     `toml:"DNS_FRAGMENT_STORE_CAPACITY"`
-	SOCKS5FragmentStoreCapacity  int     `toml:"SOCKS5_FRAGMENT_STORE_CAPACITY"`
-	MaxPacketSize                int     `toml:"MAX_PACKET_SIZE"`
-	MaxStreamsPerSession         int     `toml:"MAX_STREAMS_PER_SESSION"`
+	TCPListenerEnabled        bool    `toml:"TCP_LISTENER_ENABLED"`
+	TCPMaxConns               int     `toml:"TCP_MAX_CONNS"`
+	TCPMaxConnsPerIP          int     `toml:"TCP_MAX_CONNS_PER_IP"`
+	TCPMaxQueriesPerConn      int     `toml:"TCP_MAX_QUERIES_PER_CONN"`
+	TCPReadIdleTimeoutSeconds float64 `toml:"TCP_READ_IDLE_TIMEOUT_SECONDS"`
+	TCPWriteTimeoutSeconds    float64 `toml:"TCP_WRITE_TIMEOUT_SECONDS"`
+
+	// Encrypted DNS listeners. These are *optional add-ons*, not part of the
+	// UDP/TCP-53 fallback chain: a client only uses DoT/DoH when it explicitly
+	// selects that transport, and if it fails the client itself falls back to
+	// UDP/TCP 53. Both share the exact transport-agnostic packet handler used by
+	// the UDP/TCP paths, so all tunnel logic is identical. DoT is DNS-over-TLS
+	// (RFC 7858): the same length-prefixed framing as TCP/53, wrapped in TLS.
+	// DoH is DNS-over-HTTPS (RFC 8484): DNS wire-format in an HTTP/2 request body.
+	DoTListenerEnabled bool   `toml:"DOT_LISTENER_ENABLED"`
+	DoTListenHost      string `toml:"DOT_LISTEN_HOST"`
+	DoTListenPort      int    `toml:"DOT_LISTEN_PORT"`
+	DoHListenerEnabled bool   `toml:"DOH_LISTENER_ENABLED"`
+	DoHListenHost      string `toml:"DOH_LISTEN_HOST"`
+	DoHListenPort      int    `toml:"DOH_LISTEN_PORT"`
+	// DoHPath is the request path the DoH endpoint answers on (RFC 8484 uses
+	// /dns-query). Anything else 404s so the surface looks like a normal resolver.
+	DoHPath string `toml:"DOH_PATH"`
+	// DoHTLSEnabled chooses how DoH coexists on 443:
+	//   true  (default) — CottenDNS terminates TLS itself. Combine with
+	//                      DOH_SHARE_BACKEND to own 443 and SNI-route the rest.
+	//   false           — "behind a proxy": CottenDNS serves plaintext HTTP/1.1 +
+	//                      h2c on a LOCAL port, and the panel's own front (Xray
+	//                      fallback / nginx / Caddy) terminates TLS on 443 and
+	//                      forwards the DoH route here. This is the universally
+	//                      compatible mode: the panel keeps 443 and every one of
+	//                      its inbounds (VMess/VLESS/Trojan/xhttp/gRPC/ws/tls,
+	//                      CDN-fronted, WireGuard-UDP) works untouched.
+	DoHTLSEnabled bool `toml:"DOH_TLS_ENABLED"`
+	// DoHShareBackend lets DoH share :443 with a co-hosted TLS service (Hiddify,
+	// 3x-ui, ...). When set (e.g. "127.0.0.1:8443", where that service now
+	// listens), the DoH listener peeks each connection's TLS SNI: SNI matching a
+	// DOMAIN entry is served as DoH; every other connection is spliced untouched
+	// to this backend so the co-hosted service keeps working. Empty = DoH owns its
+	// port. The routing bias is fail-safe: any peek/parse uncertainty forwards to
+	// the backend, so we never take 443 away from the other service.
+	DoHShareBackend       string `toml:"DOH_SHARE_BACKEND"`
+	DoHShareProxyProtocol bool   `toml:"DOH_SHARE_PROXY_PROTOCOL"`
+	// DoHCoexistMode picks how DoH shares the box with a panel (3x-ui, Hiddify, ...):
+	//
+	//   "front"  (model B) — CottenDNS owns the TLS port, terminates TLS itself and
+	//                        SNI-routes anything that is not ours to DOH_SHARE_BACKEND.
+	//   "behind" (model A) — a panel owns 443; CottenDNS serves cleartext HTTP/1.1+h2c
+	//                        on DOH_BEHIND_PORT and the panel's front forwards DoH to it.
+	//   "auto"   (default) — decided at runtime by whoever holds the port: if the TLS
+	//                        port binds we take model B, if it is already taken we fall
+	//                        back to model A. Re-evaluated continuously, so installing
+	//                        a panel later (or removing one) flips the model without a
+	//                        config edit. This never takes 443 from an existing panel.
+	DoHCoexistMode string `toml:"DOH_COEXIST_MODE"`
+	// DoHBehindPort is the local cleartext port used whenever model A is active.
+	DoHBehindPort int `toml:"DOH_BEHIND_PORT"`
+	// Dedicated DoH admission limits. Reusing MAX_CONCURRENT_REQUESTS here can
+	// permit roughly a gigabyte of request bodies, so HTTP has its own request,
+	// byte, and per-client rate budgets.
+	DoHMaxInflight       int      `toml:"DOH_MAX_INFLIGHT"`
+	DoHMaxInflightBytes  int      `toml:"DOH_MAX_INFLIGHT_BYTES"`
+	DoHRequestsPerSecond float64  `toml:"DOH_REQUESTS_PER_SECOND_PER_IP"`
+	DoHRequestBurst      int      `toml:"DOH_REQUEST_BURST_PER_IP"`
+	DoHTrustedProxyCIDRs []string `toml:"DOH_TRUSTED_PROXY_CIDRS"`
+	// EncryptedMaxConns caps how many of TCP_MAX_CONNS the DoT/DoH listeners may
+	// hold at once. The remainder stays permanently reserved for plain
+	// DNS-over-TCP/53, so flooding the optional encrypted listeners can never
+	// starve the survival fallback. 0 = three quarters of TCP_MAX_CONNS.
+	EncryptedMaxConns int `toml:"ENCRYPTED_MAX_CONNS"`
+	// TLS material for DoT/DoH. Resolution order (see buildStreamTLSConfig):
+	//  1. TLSCertFile + TLSKeyFile when both are set — a real cert (best disguise).
+	//  2. else ACME/Let's Encrypt for DOMAIN when ACMEEnabled — auto-obtained.
+	//  3. else a self-signed cert generated at startup so the server still boots.
+	TLSCertFile                  string `toml:"TLS_CERT_FILE"`
+	TLSKeyFile                   string `toml:"TLS_KEY_FILE"`
+	ACMEEnabled                  bool   `toml:"ACME_ENABLED"`
+	ACMECacheDir                 string `toml:"ACME_CACHE_DIR"`
+	ACMEEmail                    string `toml:"ACME_EMAIL"`
+	SocketBufferSize             int    `toml:"SOCKET_BUFFER_SIZE"`
+	MaxConcurrentRequests        int    `toml:"MAX_CONCURRENT_REQUESTS"`
+	MaxIngressQueueBytes         int    `toml:"MAX_INGRESS_QUEUE_BYTES"`
+	DNSRequestWorkers            int    `toml:"DNS_REQUEST_WORKERS"`
+	DeferredSessionWorkers       int    `toml:"DEFERRED_SESSION_WORKERS"`
+	DeferredSessionQueueLimit    int    `toml:"DEFERRED_SESSION_QUEUE_LIMIT"`
+	SessionOrphanQueueInitialCap int    `toml:"SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY"`
+	StreamQueueInitialCapacity   int    `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
+	DNSFragmentStoreCapacity     int    `toml:"DNS_FRAGMENT_STORE_CAPACITY"`
+	SOCKS5FragmentStoreCapacity  int    `toml:"SOCKS5_FRAGMENT_STORE_CAPACITY"`
+	MaxPacketSize                int    `toml:"MAX_PACKET_SIZE"`
+	MaxStreamsPerSession         int    `toml:"MAX_STREAMS_PER_SESSION"`
 	// MaxActiveSessions caps concurrent live tunnel sessions, protecting server
 	// memory/CPU from being exhausted by session-init floods. The session-ID space
 	// is 16-bit (65535 slots) but that many live sessions is far more load than a
@@ -167,6 +240,22 @@ func defaultServerConfig() ServerConfig {
 		TCPMaxQueriesPerConn:              0,
 		TCPReadIdleTimeoutSeconds:         30.0,
 		TCPWriteTimeoutSeconds:            15.0,
+		DoTListenerEnabled:                false,
+		DoTListenHost:                     "0.0.0.0",
+		DoTListenPort:                     853,
+		DoHListenerEnabled:                false,
+		DoHListenHost:                     "0.0.0.0",
+		DoHListenPort:                     443,
+		DoHPath:                           "/dns-query",
+		DoHTLSEnabled:                     true,
+		DoHCoexistMode:                    "auto",
+		DoHBehindPort:                     8453,
+		DoHMaxInflight:                    256,
+		DoHMaxInflightBytes:               64 * 1024 * 1024,
+		DoHRequestsPerSecond:              4096,
+		DoHRequestBurst:                   8192,
+		ACMEEnabled:                       true,
+		ACMECacheDir:                      "acme-cache",
 		UDPReaders:                        readers,
 		SocketBufferSize:                  8 * 1024 * 1024,
 		MaxConcurrentRequests:             16384,
@@ -371,6 +460,42 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.MaxStreamsPerSession = clampInt(defaultIntBelow(cfg.MaxStreamsPerSession, 1, 4096), 16, 65535)
 	cfg.MaxActiveSessions = clampInt(defaultIntBelow(cfg.MaxActiveSessions, 1, 2048), 1, 65535)
 	cfg.MaxDNSResponseBytes = clampInt(defaultIntBelow(cfg.MaxDNSResponseBytes, 1, 32768), 512, 65535)
+
+	// Encrypted-DNS listener ports. Clamp to valid range; fall back to the
+	// standards (853 DoT, 443 DoH) on a bad value so a typo cannot silently
+	// disable the listener or bind port 0.
+	cfg.DoTListenPort = clampInt(defaultIntBelow(cfg.DoTListenPort, 1, 853), 1, 65535)
+	cfg.DoHListenPort = clampInt(defaultIntBelow(cfg.DoHListenPort, 1, 443), 1, 65535)
+	if cfg.DoHPath == "" || cfg.DoHPath[0] != '/' {
+		cfg.DoHPath = "/dns-query"
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.DoHCoexistMode)) {
+	case "front", "behind", "auto":
+		cfg.DoHCoexistMode = strings.ToLower(strings.TrimSpace(cfg.DoHCoexistMode))
+	default:
+		// An unknown value must not silently seize :443 from a co-hosted panel,
+		// so fall back to the port-aware automatic decision.
+		cfg.DoHCoexistMode = "auto"
+	}
+	cfg.DoHBehindPort = clampInt(defaultIntBelow(cfg.DoHBehindPort, 1, 8453), 1, 65535)
+	if strings.TrimSpace(cfg.DoTListenHost) == "" {
+		cfg.DoTListenHost = cfg.UDPHost
+	}
+	if strings.TrimSpace(cfg.DoHListenHost) == "" {
+		cfg.DoHListenHost = cfg.UDPHost
+	}
+	cfg.DoHMaxInflight = clampInt(defaultIntBelow(cfg.DoHMaxInflight, 1, 256), 1, 4096)
+	cfg.DoHMaxInflightBytes = clampInt(defaultIntBelow(cfg.DoHMaxInflightBytes, 1, 64*1024*1024), 1*1024*1024, 256*1024*1024)
+	if cfg.DoHRequestsPerSecond <= 0 {
+		cfg.DoHRequestsPerSecond = 4096
+	}
+	if cfg.DoHRequestsPerSecond > 1000000 {
+		cfg.DoHRequestsPerSecond = 1000000
+	}
+	cfg.DoHRequestBurst = clampInt(defaultIntBelow(cfg.DoHRequestBurst, 1, 8192), 1, 1000000)
+	if cfg.ACMECacheDir == "" {
+		cfg.ACMECacheDir = "acme-cache"
+	}
 
 	if cfg.DropLogIntervalSecs <= 0 {
 		cfg.DropLogIntervalSecs = 2.0
