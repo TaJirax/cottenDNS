@@ -78,6 +78,10 @@ func (c *Client) HandleSOCKS5(ctx context.Context, conn net.Conn) {
 		}
 	}
 
+	if timeout := c.cfg.LocalHandshakeTimeout(); timeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	}
+
 	version := make([]byte, 1)
 	if _, err := io.ReadFull(conn, version); err != nil {
 		_ = conn.Close()
@@ -327,6 +331,17 @@ func readNullTerminatedSocksField(conn net.Conn) ([]byte, error) {
 }
 
 func (c *Client) handleSOCKSConnect(ctx context.Context, conn net.Conn, addr string, port uint16, atyp byte, socksVersion byte) {
+	_ = conn.SetReadDeadline(time.Time{})
+	if c.cfg.MaxActiveStreams > 0 && c.activeLocalStreamCount() >= c.cfg.MaxActiveStreams {
+		c.log.Warnf("<yellow>Rejecting new SOCKS stream: active stream limit reached (%d)</yellow>", c.cfg.MaxActiveStreams)
+		if socksVersion == SOCKS4_VERSION {
+			_ = c.sendSocks4Reply(conn, false)
+		} else {
+			_ = c.sendSocksReply(conn, SOCKS5_REPLY_GENERAL_FAILURE, SOCKS5_ATYP_IPV4, net.IPv4zero, 0)
+		}
+		_ = conn.Close()
+		return
+	}
 	streamID, ok := c.get_new_stream_id()
 	if !ok {
 		c.log.Errorf("❌ <red>Failed to get new Stream ID for SOCKS CONNECT</red>")
@@ -581,6 +596,11 @@ func (c *Client) sendSocksReply(conn net.Conn, rep byte, atyp byte, bndAddr net.
 
 func (c *Client) handleSocksUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, clientPort uint16, atyp byte) {
 	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Time{})
+	if c.cfg.MaxActiveStreams > 0 && c.activeLocalStreamCount() >= c.cfg.MaxActiveStreams {
+		_ = c.sendSocksReply(conn, SOCKS5_REPLY_GENERAL_FAILURE, SOCKS5_ATYP_IPV4, net.IPv4zero, 0)
+		return
+	}
 	replyIP := net.ParseIP(c.cfg.ListenIP)
 	if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok && tcpAddr != nil && tcpAddr.IP != nil {
 		replyIP = tcpAddr.IP

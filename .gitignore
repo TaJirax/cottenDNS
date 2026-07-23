@@ -21,7 +21,8 @@ logs/
 *.tmp
 *.exe
 build/
-.gocache
+.gocache/
+.gocache-audit/
 .bench/
 
 # OpenCode tooling artifacts
@@ -31,3 +32,6 @@ build/
 client.exe
 server.exe
 cmd/*/resource_windows_*.syso
+.gochache/
+.android-build-audit/
+.tmp-android-engine-upstream/

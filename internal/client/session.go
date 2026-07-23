@@ -29,7 +29,6 @@ var (
 
 const (
 	sessionInitPayloadSize      = 10
-	sessionAcceptPayloadSize    = 8
 	sessionBusyPayloadSize      = 4
 	sessionCloseBurstMaxTargets = 10
 	sessionCloseBurstRounds     = 3
@@ -162,19 +161,29 @@ func (c *Client) exchangeSessionInit(conn Connection, initPayload []byte, verify
 // single init collector goroutine, so the state writes are unsynchronized exactly
 // as in the original sequential path.
 func (c *Client) applySessionAccept(packet VpnProto.Packet, initPayload []byte, verifyCode [4]byte) bool {
-	if len(packet.Payload) < sessionAcceptPayloadSize || !bytes.Equal(packet.Payload[4:8], verifyCode[:]) {
+	sidLen := 2
+	if packet.LegacySessionID {
+		sidLen = 1
+	}
+	verifyStart := sidLen + 2
+	acceptSize := verifyStart + len(verifyCode)
+	if len(packet.Payload) < acceptSize || !bytes.Equal(packet.Payload[verifyStart:acceptSize], verifyCode[:]) {
 		return false
 	}
-	c.sessionID = uint16(packet.Payload[0])<<8 | uint16(packet.Payload[1])
-	c.sessionCookie = packet.Payload[2]
+	if sidLen == 1 {
+		c.sessionID = uint16(packet.Payload[0])
+	} else {
+		c.sessionID = uint16(packet.Payload[0])<<8 | uint16(packet.Payload[1])
+	}
+	c.sessionCookie = packet.Payload[sidLen]
 	c.responseMode = initPayload[0]
-	c.uploadCompression, c.downloadCompression = compression.SplitPair(packet.Payload[3])
+	c.uploadCompression, c.downloadCompression = compression.SplitPair(packet.Payload[sidLen+1])
 	// Apply the server's ceilings before the session is announced as ready.
 	// Everything below derives from them (the compression decision reads the
 	// effective minimum size, and the policy refreshes maxPackedBlocks), and
 	// the send path starts reading those values the moment sessionReady is set
 	// -- so the policy has to be in place first, not merely stored afterwards.
-	c.applyServerClientPolicy(packet.Payload)
+	c.applyServerClientPolicy(packet.Payload, packet.LegacySessionID)
 	c.sessionReady = true
 	c.applySessionCompressionPolicy()
 	c.clearSessionInitBusyUntil()
@@ -368,9 +377,10 @@ func (c *Client) buildSessionQuery(domain string, packetType uint8, payload []by
 
 func (c *Client) buildTunnelQuery(domain string, sessionID uint16, packetType uint8, payload []byte) ([]byte, error) {
 	return c.buildTunnelTXTQueryRaw(domain, VpnProto.BuildOptions{
-		SessionID:  sessionID,
-		PacketType: packetType,
-		Payload:    payload,
+		LegacySessionID: c.cfg.LegacySessionID,
+		SessionID:       sessionID,
+		PacketType:      packetType,
+		Payload:         payload,
 	})
 }
 
@@ -464,9 +474,10 @@ func (c *Client) sendSessionCloseRound(targets []Connection, deadline time.Time)
 		go func() {
 			defer wg.Done()
 			query, err := c.buildTunnelTXTQueryRaw(conn.Domain, VpnProto.BuildOptions{
-				SessionID:     c.sessionID,
-				SessionCookie: c.sessionCookie,
-				PacketType:    Enums.PACKET_SESSION_CLOSE,
+				LegacySessionID: c.cfg.LegacySessionID,
+				SessionID:       c.sessionID,
+				SessionCookie:   c.sessionCookie,
+				PacketType:      Enums.PACKET_SESSION_CLOSE,
 			})
 			if err != nil {
 				return

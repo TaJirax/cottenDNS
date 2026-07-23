@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -36,6 +36,7 @@ func init() {
 
 	// Register SOCKS5 control ACKs (if they skip general ReceiveControlAck)
 	RegisterHandler(Enums.PACKET_SOCKS5_SYN_ACK, handleSocksControlAck)
+	RegisterHandler(Enums.PACKET_SOCKS5_CONNECTED_ACK, handleSocksControlAck)
 }
 
 func handleSocksConnected(c ClientContext, packet VpnProto.Packet, addr *net.UDPAddr) error {

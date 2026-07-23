@@ -36,10 +36,12 @@ import (
 // applyServerClientPolicy publishes any policy carried by a SESSION_ACCEPT
 // payload. Absent or truncated blocks are simply "no ceilings stated"; they are
 // not an error, because a policy-less server is the normal case.
-func (c *Client) applyServerClientPolicy(payload []byte) {
-	// The client always speaks the native two-byte session-ID format, so the
-	// policy block sits after the native-width base payload.
-	policy, ok := VpnProto.DecodeSessionAcceptPolicy(payload, false)
+func (c *Client) applyServerClientPolicy(payload []byte, legacySessionID ...bool) {
+	legacy := false
+	if len(legacySessionID) > 0 {
+		legacy = legacySessionID[0]
+	}
+	policy, ok := VpnProto.DecodeSessionAcceptPolicy(payload, legacy)
 	if !ok {
 		// Clear rather than keep what we had. Sessions are re-established over
 		// the client's lifetime, so an operator who removes the ceilings and

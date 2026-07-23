@@ -7,6 +7,35 @@ helps** on hostile DNS networks. Honest caveats are called out where they exist.
 
 ---
 
+## Android engine ownership and embedding
+
+The Android-facing engine is now maintained in this repository instead of as a
+modified source copy inside the app. Android CI checks out an immutable
+CottenDNS revision and builds all four ABIs with
+`scripts/build-android-client.sh`. This removes the source/binary drift that can
+make branch builds work while merged-main builds silently package an older
+engine.
+
+The standalone client includes the app integration contract:
+
+- Fast Connect releases startup after a safe MTU-tested pool is available,
+  throttles the remaining scan to background priority, and promotes newly found
+  high-MTU resolvers without delaying user traffic.
+- Legacy one-byte session framing is selected per client packet. The server
+  keeps auto-detecting both one-byte and native two-byte clients concurrently;
+  no process-global server mode is introduced.
+- Scan-only resolver discovery and the `WD_PROGRESS`, `WD_RESOLVERS`, and
+  `WD_SCAN` machine records are emitted independently of human log level.
+- Local handshake deadlines and active-stream admission prevent stalled app
+  sockets from consuming the engine indefinitely.
+- Generic UDP, fallback to the DNS-specific UDP path, loss recovery, adaptive
+  duplication, and server fairness remain in the same versioned source.
+
+The Android integration and pinned-revision rules are documented in
+`docs/ANDROID_ENGINE_INTEGRATION.md`.
+
+---
+
 ## 0. System model (read this first)
 
 CottenDNS tunnels TCP over DNS. The client exposes a local SOCKS5/TCP

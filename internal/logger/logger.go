@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -111,7 +111,11 @@ func parseLevel(raw string) int {
 }
 
 func (l *Logger) logf(level int, format string, args ...any) {
-	if l == nil || level < l.level {
+	l.logfInternal(level, false, format, args...)
+}
+
+func (l *Logger) logfInternal(level int, force bool, format string, args ...any) {
+	if l == nil || (!force && level < l.level) {
 		return
 	}
 
@@ -162,6 +166,11 @@ func (l *Logger) Debugf(format string, args ...any) { l.logf(levelDebug, format,
 func (l *Logger) Infof(format string, args ...any)  { l.logf(levelInfo, format, args...) }
 func (l *Logger) Warnf(format string, args ...any)  { l.logf(levelWarn, format, args...) }
 func (l *Logger) Errorf(format string, args ...any) { l.logf(levelError, format, args...) }
+
+// Machinef emits machine-readable embedding telemetry at every log level.
+func (l *Logger) Machinef(format string, args ...any) {
+	l.logfInternal(levelInfo, true, format, args...)
+}
 
 func (l *Logger) Enabled(level int) bool {
 	return l != nil && level >= l.level

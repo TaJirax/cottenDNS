@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -190,9 +190,10 @@ dispatchLoop:
 		c.pingManager.NotifyPacket(finalPacketType, false)
 
 		opts := VpnProto.BuildOptions{
-			SessionID:     c.sessionID,
-			SessionCookie: c.sessionCookie,
-			PacketType:    finalPacketType,
+			LegacySessionID: c.cfg.LegacySessionID,
+			SessionID:       c.sessionID,
+			SessionCookie:   c.sessionCookie,
+			PacketType:      finalPacketType,
 			CompressionType: func() uint8 {
 				if wasPacked {
 					return c.uploadCompression

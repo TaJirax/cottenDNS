@@ -113,6 +113,21 @@ func (s *Stream_client) ingestFECShard(a *arq.ARQ, frame []byte) {
 	}
 }
 
+func (c *Client) activeLocalStreamCount() int {
+	if c == nil {
+		return 0
+	}
+	c.streamsMu.RLock()
+	defer c.streamsMu.RUnlock()
+	count := 0
+	for id := range c.active_streams {
+		if id != 0 {
+			count++
+		}
+	}
+	return count
+}
+
 // get_new_stream_id finds the next available stream ID using a circular counter (1-65535).
 func (c *Client) get_new_stream_id() (uint16, bool) {
 	c.streamsMu.Lock()

@@ -515,6 +515,7 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 			c.activeResolverCount(),
 		)
 	}
+	c.logResolverRuntimeState()
 	if c.strategy5PoolNeedsRestart() {
 		c.requestSessionRestart("MTU-weighted primary resolver pool fell below its configured minimum; re-clustering reserves")
 	}
@@ -774,6 +775,7 @@ func (c *Client) handleSuccessfulResolverRecheck(serverKey string, now time.Time
 	if conn, ok := c.GetConnectionByKey(serverKey); ok {
 		c.appendResolverCacheEntry(&conn)
 	}
+	c.logResolverRuntimeState()
 }
 
 func (c *Client) tryAcquireResolverRecheckSlot() bool {

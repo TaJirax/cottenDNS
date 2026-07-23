@@ -100,6 +100,9 @@ type ClientConfig struct {
 	AutoDisableMinObservations            int     `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
 	AutoDisableCheckIntervalSeconds       float64 `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
 	BaseEncodeData                        bool    `toml:"BASE_ENCODE_DATA"`
+	LegacySessionID                       bool    `toml:"LEGACY_SESSION_ID"`
+	MaxActiveStreams                      int     `toml:"MAX_ACTIVE_STREAMS"`
+	LocalHandshakeTimeoutSeconds          float64 `toml:"LOCAL_HANDSHAKE_TIMEOUT_SECONDS"`
 	UploadCompressionType                 int     `toml:"UPLOAD_COMPRESSION_TYPE"`
 	DownloadCompressionType               int     `toml:"DOWNLOAD_COMPRESSION_TYPE"`
 	CompressionMinSize                    int     `toml:"COMPRESSION_MIN_SIZE"`
@@ -140,6 +143,9 @@ type ClientConfig struct {
 	// the minimum number of resolvers that must sustain the raised MTU before it is
 	// adopted, trading a little redundancy for the larger MTU. Default 2.
 	MTUWeightedMinPool int `toml:"MTU_WEIGHTED_MIN_POOL"`
+	// FastConnect starts once a small safe resolver pool has passed probing.
+	// Remaining resolvers continue probing in the background.
+	FastConnect bool `toml:"FAST_CONNECT"`
 	// Active MTU test parameters resolved from the startup mode at runtime.
 	// Populated by ApplyStartupModeMTU after the mode is known. Not loaded from TOML.
 	MTUTestRetries                       int     `toml:"-"`
@@ -334,6 +340,9 @@ func defaultClientConfig() ClientConfig {
 		AutoDisableMinObservations:           3,
 		AutoDisableCheckIntervalSeconds:      1.0,
 		BaseEncodeData:                       false,
+		LegacySessionID:                      false,
+		MaxActiveStreams:                     2048,
+		LocalHandshakeTimeoutSeconds:         5.0,
 		UploadCompressionType:                2,
 		DownloadCompressionType:              2,
 		CompressionMinSize:                   compression.DefaultMinSize,
@@ -354,6 +363,7 @@ func defaultClientConfig() ClientConfig {
 		MTUGroupGapRatio:                     0.25,
 		MTUAdaptiveGrouping:                  true,
 		MTUWeightedMinPool:                   2,
+		FastConnect:                          false,
 		DNSRandomizeQueryID:                  true,
 		DNSEDNSCookie:                        true,
 		DNSQNameCaseRandomization:            false,
@@ -606,6 +616,16 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	if cfg.QNameLabelLength <= 0 || cfg.QNameLabelLength > 63 {
 		cfg.QNameLabelLength = 63
 	}
+
+	if cfg.MaxActiveStreams < 0 {
+		cfg.MaxActiveStreams = 0
+	} else if cfg.MaxActiveStreams > 65535 {
+		cfg.MaxActiveStreams = 65535
+	}
+	if cfg.LocalHandshakeTimeoutSeconds <= 0 {
+		cfg.LocalHandshakeTimeoutSeconds = 5.0
+	}
+	cfg.LocalHandshakeTimeoutSeconds = clampFloat(cfg.LocalHandshakeTimeoutSeconds, 0.5, 60.0)
 
 	// EDNS_UDP_SIZE: unset/non-positive falls back to the default; otherwise clamp
 	// to a sane DNS range so a typo can neither underflow below a minimal message
@@ -930,6 +950,10 @@ func (c ClientConfig) DNSResponseFragmentTimeout() time.Duration {
 
 func (c ClientConfig) SOCKSUDPAssociateReadTimeout() time.Duration {
 	return time.Duration(c.SOCKSUDPAssociateReadTimeoutSeconds * float64(time.Second))
+}
+
+func (c ClientConfig) LocalHandshakeTimeout() time.Duration {
+	return time.Duration(c.LocalHandshakeTimeoutSeconds * float64(time.Second))
 }
 
 func (c ClientConfig) ClientTerminalStreamRetention() time.Duration {

@@ -346,6 +346,16 @@ AUTO_DISABLE_CHECK_INTERVAL_SECONDS = 1.0
 # Usually keep false unless a specific resolver path behaves better with it.
 BASE_ENCODE_DATA = false
 
+# Use the one-byte session-ID wire format for legacy MasterDNS/StormDNS/
+# WhiteDNS servers. Keep false for native CottenDNS servers.
+LEGACY_SESSION_ID = false
+
+# Maximum concurrent local SOCKS/TCP/UDP streams. 0 disables the cap.
+MAX_ACTIVE_STREAMS = 2048
+
+# Prevent a stalled local app from holding an incomplete SOCKS handshake.
+LOCAL_HANDSHAKE_TIMEOUT_SECONDS = 5.0
+
 # ------------------------------------------------------------------------------
 # 5) Compression
 # What this section does:
@@ -419,6 +429,10 @@ MTU_ADAPTIVE_GROUPING = true
 # fast resolver cannot strand the session. Higher = safer/lower MTU, lower =
 # more aggressive/higher MTU. Default 2.
 MTU_WEIGHTED_MIN_POOL = 2
+
+# Start once seven resolvers (or the whole smaller fleet) pass MTU probing.
+# Remaining resolvers are tested in the background at low priority.
+FAST_CONNECT = false
 
 # ------------------------------------------------------------------------------
 # 7) Runtime Workers, Queues, and Timers

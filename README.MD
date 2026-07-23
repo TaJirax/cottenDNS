@@ -794,6 +794,12 @@ sequenceDiagram
 
 ## 📱 Mobile And LAN Usage
 
+Android CI should check out CottenDNS at an immutable commit or tag and build
+the four ABI payloads from this repository. Do not maintain a second modified
+engine copy inside the app. See
+[Android external-engine integration](docs/ANDROID_ENGINE_INTEGRATION.md) for
+the build command, ABI outputs, configuration keys, and revision contract.
+
 There is no official mobile app in this repository.
 
 Usable options:

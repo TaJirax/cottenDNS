@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -27,6 +27,26 @@ func (c *Client) mtuInfoEnabled() bool {
 
 func (c *Client) mtuWarnEnabled() bool {
 	return c != nil && c.log != nil && c.log.Enabled(logger.LevelWarn)
+}
+
+func (c *Client) logConnectionProgress(phase string, percent int, keyValues ...any) {
+	if c == nil || c.log == nil || phase == "" {
+		return
+	}
+	if percent < 0 {
+		percent = 0
+	} else if percent > 100 {
+		percent = 100
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "WD_PROGRESS phase=%s percent=%d", phase, percent)
+	for idx := 0; idx+1 < len(keyValues); idx += 2 {
+		key, ok := keyValues[idx].(string)
+		if ok && key != "" {
+			fmt.Fprintf(&b, " %s=%v", key, keyValues[idx+1])
+		}
+	}
+	c.log.Machinef("%s", b.String())
 }
 
 func (c *Client) logMTUProbe(isRetry bool, background bool, format string, args ...any) {

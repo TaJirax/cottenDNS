@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cottendns-go/internal/compression"
 )
@@ -72,6 +73,21 @@ MTU_TEST_TIMEOUT_RESOLVERS = 1.5
 	}
 	if cfg.ResolverMap["1.1.1.1"] != 5353 {
 		t.Fatalf("unexpected resolver port for 1.1.1.1: got=%d want=%d", cfg.ResolverMap["1.1.1.1"], 5353)
+	}
+}
+
+func TestAndroidEmbeddingDefaultsAndLimits(t *testing.T) {
+	cfg := defaultClientConfig()
+	if cfg.LegacySessionID || cfg.FastConnect {
+		t.Fatal("compatibility modes must remain opt-in")
+	}
+	if cfg.MaxActiveStreams != 2048 || cfg.LocalHandshakeTimeoutSeconds != 5 {
+		t.Fatalf("unexpected embedding defaults: streams=%d handshake=%v",
+			cfg.MaxActiveStreams, cfg.LocalHandshakeTimeoutSeconds)
+	}
+
+	if cfg.LocalHandshakeTimeout() != 5*time.Second {
+		t.Fatalf("handshake duration=%v, want 5s", cfg.LocalHandshakeTimeout())
 	}
 }
 
