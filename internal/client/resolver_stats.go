@@ -179,6 +179,7 @@ func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, localAdd
 		c.retractResolverTimeoutEvent(sample.serverKey, sample.timedOutAt, receivedAt)
 	}
 
+	c.recordTunnelResponse(receivedAt)
 	c.noteResolverSuccess(sample.serverKey, receivedAt.Sub(sample.sentAt))
 }
 

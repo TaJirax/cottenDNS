@@ -95,6 +95,7 @@ func (c *Client) resetRuntimeBindings(resetSession bool) {
 	c.clearSessionResetPending()
 	c.txTotalBytes.Store(0)
 	c.rxTotalBytes.Store(0)
+	c.clearTunnelActivity()
 	if resetSession {
 		c.resetSessionState(true)
 	}
@@ -276,6 +277,7 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 	}
 
 	c.tunnelConns = conns
+	c.resetTunnelActivity(c.now())
 
 	c.log.Infof("\U0001F4E1 <cyan>Async Runtime Initialized: <green>%d RX/TX Workers</green>, <green>%d Processors</green></cyan>",
 		c.tunnelRX_TX_Workers, c.tunnelProcessWorkers)
@@ -683,6 +685,7 @@ func (c *Client) asyncWriterWorker(ctx context.Context, id int, conn *net.UDPCon
 					continue
 				}
 				if _, err := conn.WriteToUDP(frame.packet, frame.addr); err == nil {
+					c.recordTunnelSend(now)
 					c.trackResolverSend(frame.packet, frame.addr.String(), localAddr, frame.serverKey, now)
 					c.txTotalBytes.Add(uint64(len(frame.packet)))
 				}

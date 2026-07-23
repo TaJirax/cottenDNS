@@ -34,6 +34,9 @@ func buildTCPTestClient() *Client {
 func TestHandleTCPConnectQueuesStreamSyn(t *testing.T) {
 	c := buildTCPTestClient()
 	c.syncedUploadMTU = 64
+	// HandleTCPConnect now gates on stream admission, which the real TCP listener
+	// only reaches after the session is up with valid resolvers.
+	c.sessionReady = true
 
 	local, remote := net.Pipe()
 	defer local.Close()

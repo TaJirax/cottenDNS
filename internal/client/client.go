@@ -160,14 +160,22 @@ type Client struct {
 	// line the instant each resolver is decided, so the UI's Valid/Rejected
 	// counters advance in real time during a -scan-only run instead of only after
 	// the whole fleet finishes. Set solely around RunResolverScan.
-	scanTelemetryActive   atomic.Bool
-	rxDroppedPackets      atomic.Uint64
-	txAdmissionDrops      atomic.Uint64
-	streamDialFailures    atomic.Uint64
-	streamWriteFailures   atomic.Uint64
-	lastFECReceived       atomic.Int64
-	runtimeReadBufferSize int
-	lastRXDropLogUnix     atomic.Int64
+	scanTelemetryActive atomic.Bool
+	// Tunnel liveness for local-stream admission control: the last time a tunnel
+	// frame was sent and the last time any resolver response came back. When sends
+	// outrun responses past the admission window the tunnel is treated as stalled
+	// and new local SOCKS/TCP streams are refused fast (see stream_admission.go)
+	// rather than piling onto a dead path while recovery runs.
+	lastTunnelSendUnix               atomic.Int64
+	lastTunnelResponseUnix           atomic.Int64
+	lastStreamAdmissionRejectLogUnix atomic.Int64
+	rxDroppedPackets                 atomic.Uint64
+	txAdmissionDrops                 atomic.Uint64
+	streamDialFailures               atomic.Uint64
+	streamWriteFailures              atomic.Uint64
+	lastFECReceived                  atomic.Int64
+	runtimeReadBufferSize            int
+	lastRXDropLogUnix                atomic.Int64
 	// injectedNXDOMAINCount counts forged NXDOMAIN responses ignored as on-path
 	// DNS poisoning (see RESOLVER_IGNORE_INJECTED_NXDOMAIN). Purely observational.
 	injectedNXDOMAINCount atomic.Uint64
