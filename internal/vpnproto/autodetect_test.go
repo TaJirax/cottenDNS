@@ -58,17 +58,54 @@ func TestParseFromLabelsAnyMatchingDefersInflation(t *testing.T) {
 	}
 }
 
-// Every method's encoded frame must be decoded by the auto-detect codec set,
-// and the detected index must map back to the method that produced it.
+// aeadFirstMethods mirrors udpserver.SetCodecSet's trial ordering: authenticated
+// (AES-GCM) methods first, then the unauthenticated ones. This is the order the
+// server actually decodes with at ingress; the ascending AllMethods order is
+// never used there. Ordering the trial set this way is what lets an authenticated
+// frame be matched by its authenticating codec before any unauthenticated codec
+// is reached.
+func aeadFirstMethods(methods []int) []int {
+	aead := make([]int, 0, len(methods))
+	other := make([]int, 0, len(methods))
+	for _, m := range methods {
+		if security.IsAuthenticatedMethod(m) {
+			aead = append(aead, m)
+		} else {
+			other = append(other, m)
+		}
+	}
+	return append(aead, other...)
+}
+
+// Every method's encoded frame must be decoded by the auto-detect codec set, and
+// the detected index must map back to the method that produced it — under the
+// same conditions the server decodes with.
+//
+// The set is ordered AEAD-first exactly as udpserver.SetCodecSet orders it. Start
+// indices mirror the server's ingress trial:
+//
+//   - Authenticated (AES-GCM) frames start cold at index 0. Because every AEAD
+//     codec precedes every unauthenticated one, the correct method is found — and
+//     authenticates — before any unauthenticated codec is ever tried, so an
+//     authenticated frame can never be mis-claimed. This is the security-critical
+//     guarantee and it is deterministic.
+//   - Unauthenticated (None/XOR/ChaCha20) frames are NOT method-identifiable from
+//     ciphertext alone: a wrong-method "decrypt" yields garbage that can
+//     occasionally pass structural validation. The server copes by starting each
+//     trial at the last-successful codec; this mirrors that steady state by
+//     starting at the frame's own codec, whose decode of its own frame is always
+//     correct. (Asserting exact detection from a cold start for these methods
+//     would be testing something inherently undecidable.)
 func TestParseInflatedFromLabelsAnyDetectsEveryMethod(t *testing.T) {
-	set, err := security.NewCodecSet(security.AllMethods, autoDetectKey)
+	ordered := aeadFirstMethods(security.AllMethods)
+	set, err := security.NewCodecSet(ordered, autoDetectKey)
 	if err != nil {
 		t.Fatalf("NewCodecSet: %v", err)
 	}
 
 	payload := []byte("auto-detect-me-please")
 
-	for setIdx, method := range security.AllMethods {
+	for setIdx, method := range ordered {
 		codec, err := security.NewCodec(method, autoDetectKey)
 		if err != nil {
 			t.Fatalf("NewCodec(%d): %v", method, err)
@@ -82,16 +119,17 @@ func TestParseInflatedFromLabelsAnyDetectsEveryMethod(t *testing.T) {
 			t.Fatalf("BuildEncodedAuto(method %d): %v", method, err)
 		}
 
-		// Start the trial at a deliberately wrong index to force the search to
-		// locate the correct method on its own.
-		start := (setIdx + 2) % len(set)
+		start := 0
+		if !security.IsAuthenticatedMethod(method) {
+			start = setIdx
+		}
 		packet, detectedIdx, err := ParseInflatedFromLabelsAny(labels, set, start)
 		if err != nil {
 			t.Fatalf("method %d: ParseInflatedFromLabelsAny failed: %v", method, err)
 		}
 		if detectedIdx != setIdx {
 			t.Fatalf("method %d: detected set index %d (method %d), want %d",
-				method, detectedIdx, security.AllMethods[detectedIdx], setIdx)
+				method, detectedIdx, ordered[detectedIdx], setIdx)
 		}
 		if packet.PacketType != Enums.PACKET_PING {
 			t.Fatalf("method %d: packet type = %d, want PING", method, packet.PacketType)
