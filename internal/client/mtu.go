@@ -341,6 +341,9 @@ func (c *Client) finalizeMTUSelectionLocked(validConns []Connection, minUpload, 
 	}
 	c.logMTUGroups(groups)
 	c.logResolverTierSummary()
+	// Visible even at LOG_LEVEL=WARN so the user always sees which resolvers were
+	// selected, not only the ones that were rejected.
+	c.logSelectedResolvers()
 	return validConns
 }
 
@@ -656,6 +659,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 						rejectedNow,
 					)
 				}
+				c.emitScanResult(conn.ResolverLabel, false)
 			}
 		}
 	}()
@@ -694,6 +698,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 				rejectedNow,
 			)
 		}
+		c.emitScanResult(conn.ResolverLabel, false)
 		return
 	case mtuRejectDownload:
 		c.mtuStateMu.Lock()
@@ -713,6 +718,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 				rejectedNow,
 			)
 		}
+		c.emitScanResult(conn.ResolverLabel, false)
 		return
 	}
 
@@ -743,6 +749,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 			rejectedNow,
 		)
 	}
+	c.emitScanResult(accepted.ResolverLabel, true)
 	c.appendResolverCacheEntry(&accepted)
 }
 

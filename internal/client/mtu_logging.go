@@ -147,6 +147,48 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	)
 }
 
+// logSelectedResolvers emits a single, concise summary of the resolvers the
+// session actually connected through, at Warn level so it stays visible even
+// when LOG_LEVEL is WARN. Without it, a WARN-level run shows only the per-
+// resolver rejection lines (also Warn) and never reveals which resolvers won —
+// the per-resolver "✅ Accepted" lines and the full completion table are Info.
+// Must be called with mtuStateMu already held (it reads c.connections directly).
+func (c *Client) logSelectedResolvers() {
+	if c == nil || c.log == nil || !c.log.Enabled(logger.LevelWarn) {
+		return
+	}
+	const maxListed = 20
+	active := make([]string, 0, len(c.connections))
+	reserve := 0
+	for i := range c.connections {
+		conn := &c.connections[i]
+		if !conn.IsValid || conn.ResolverLabel == "" {
+			continue
+		}
+		if conn.Backup {
+			reserve++
+			continue
+		}
+		active = append(active, conn.ResolverLabel)
+	}
+	if len(active) == 0 {
+		return
+	}
+	listed := active
+	suffix := ""
+	if len(active) > maxListed {
+		listed = active[:maxListed]
+		suffix = fmt.Sprintf(", …(+%d more)", len(active)-maxListed)
+	}
+	c.log.Warnf(
+		"<green>✅ Connected via <cyan>%d</cyan> active resolver(s)</green> (<yellow>%d</yellow> held in reserve): %s%s",
+		len(active),
+		reserve,
+		strings.Join(listed, ", "),
+		suffix,
+	)
+}
+
 // logMTUOperatingPoint reports the Layer 3 best-group decision: the session MTU
 // the client chose to run at, how many resolvers form the active pool, and how
 // many slower resolvers were held back as backups (used only if the active pool

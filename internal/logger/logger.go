@@ -176,6 +176,22 @@ func (l *Logger) Enabled(level int) bool {
 	return l != nil && level >= l.level
 }
 
+// Close releases the log file writer, if any. Safe to call more than once and
+// on a nil Logger. Console output is unaffected.
+func (l *Logger) Close() error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.fileWriter == nil {
+		return nil
+	}
+	err := l.fileWriter.Close()
+	l.fileWriter = nil
+	return err
+}
+
 func stripColorTags(text string) string {
 	start := strings.IndexByte(text, '<')
 	if start == -1 {

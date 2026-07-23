@@ -156,13 +156,18 @@ type Client struct {
 	transportRecoveryPending atomic.Bool
 	lastTransportRecovery    atomic.Int64
 	transportRecoveryCount   atomic.Uint64
-	rxDroppedPackets         atomic.Uint64
-	txAdmissionDrops         atomic.Uint64
-	streamDialFailures       atomic.Uint64
-	streamWriteFailures      atomic.Uint64
-	lastFECReceived          atomic.Int64
-	runtimeReadBufferSize    int
-	lastRXDropLogUnix        atomic.Int64
+	// scanTelemetryActive makes the MTU probe path emit a WD_SCAN valid/rejected
+	// line the instant each resolver is decided, so the UI's Valid/Rejected
+	// counters advance in real time during a -scan-only run instead of only after
+	// the whole fleet finishes. Set solely around RunResolverScan.
+	scanTelemetryActive   atomic.Bool
+	rxDroppedPackets      atomic.Uint64
+	txAdmissionDrops      atomic.Uint64
+	streamDialFailures    atomic.Uint64
+	streamWriteFailures   atomic.Uint64
+	lastFECReceived       atomic.Int64
+	runtimeReadBufferSize int
+	lastRXDropLogUnix     atomic.Int64
 	// injectedNXDOMAINCount counts forged NXDOMAIN responses ignored as on-path
 	// DNS poisoning (see RESOLVER_IGNORE_INJECTED_NXDOMAIN). Purely observational.
 	injectedNXDOMAINCount atomic.Uint64
