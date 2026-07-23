@@ -80,6 +80,41 @@ jobs:
         continue-on-error: true
         run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
+  android-engine:
+    runs-on: ubuntu-latest
+
+    # Android-source contract: this repo is checked out at a pinned commit and
+    # built as the WhiteDNS Android app's native engine. Cross-compile all four
+    # ABIs through scripts/build-android-client.sh on every push so main can never
+    # silently stop being a valid Android engine source. Uses the NDK preinstalled
+    # on the runner rather than downloading a pinned one — this validates the build
+    # path, not a specific NDK release.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build all four Android ABIs
+        run: |
+          set -euo pipefail
+          : "${ANDROID_NDK_LATEST_HOME:?No Android NDK found on the runner}"
+          OUTPUT_DIR="$(mktemp -d)/jniLibs"
+          NDK_ROOT="${ANDROID_NDK_LATEST_HOME}" \
+            NDK_HOST=linux-x86_64 \
+            OUTPUT_DIR="${OUTPUT_DIR}" \
+            bash scripts/build-android-client.sh all
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            so="${OUTPUT_DIR}/${abi}/libcottendns_client.so"
+            test -f "${so}" || { echo "::error::missing ${abi} engine binary"; exit 1; }
+            echo "built ${abi}: $(stat -c%s "${so}") bytes"
+          done
+          echo "All four Android ABIs cross-compiled from main."
+
   deployment-contract:
     runs-on: ubuntu-latest
 
