@@ -384,7 +384,7 @@ func defaultClientConfig() ClientConfig {
 		TXChannelSize:                        32768,
 		RXChannelSize:                        32768,
 		ResolverUDPConnectionPoolSize:        1024,
-		StreamQueueInitialCapacity:           65536,
+		StreamQueueInitialCapacity:           512, // per local stream, not global — see clamp below
 		OrphanQueueInitialCapacity:           16384,
 		DNSResponseFragmentStoreCap:          16384,
 		DNSResponseFragmentTimeoutSeconds:    60.0,
@@ -746,7 +746,10 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.TXChannelSize = clampInt(defaultIntBelow(cfg.TXChannelSize, 1, 32768), 64, 262144)
 	cfg.RXChannelSize = clampInt(defaultIntBelow(cfg.RXChannelSize, 1, 32768), 64, 262144)
 	cfg.ResolverUDPConnectionPoolSize = clampInt(defaultIntBelow(cfg.ResolverUDPConnectionPoolSize, 1, 64), 1, 4096)
-	cfg.StreamQueueInitialCapacity = clampInt(defaultIntBelow(cfg.StreamQueueInitialCapacity, 1, 128), 8, 262144)
+	// Sizes a census map allocated once per local stream: ~2.3 MiB/stream at
+	// 65536 vs ~19 KiB at 512. A browser's worth of streams at the large value
+	// OOMs Android, so both the default and this ceiling stay small.
+	cfg.StreamQueueInitialCapacity = clampInt(defaultIntBelow(cfg.StreamQueueInitialCapacity, 1, 128), 8, 16384)
 	cfg.OrphanQueueInitialCapacity = clampInt(defaultIntBelow(cfg.OrphanQueueInitialCapacity, 1, 32), 4, 65536)
 	cfg.DNSResponseFragmentStoreCap = clampInt(defaultIntBelow(cfg.DNSResponseFragmentStoreCap, 1, 256), 16, 65536)
 	cfg.DNSResponseFragmentTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.DNSResponseFragmentTimeoutSeconds, 10.0), 1.0, 600.0)
