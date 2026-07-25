@@ -118,6 +118,12 @@ type ClientConfig struct {
 	MTUTestTimeoutLogs                    float64 `toml:"MTU_TEST_TIMEOUT_LOGS"`
 	MTUTestParallelismResolvers           int     `toml:"MTU_TEST_PARALLELISM_RESOLVERS"`
 	MTUTestParallelismLogs                int     `toml:"MTU_TEST_PARALLELISM_LOGS"`
+	// MTUBackgroundParallelism is how many resolvers the FastConnect background
+	// sweep probes at once, after the starter pool has released the session. The
+	// initial scan keeps using MTUTestParallelism so connecting stays fast; this
+	// only governs the sweep that continues behind an already-usable tunnel,
+	// which defaults to a single resolver to stay out of the tunnel's way.
+	MTUBackgroundParallelism int `toml:"MTU_BACKGROUND_PARALLELISM"`
 	// Adaptive per-group MTU (loss-aware probing + clustering).
 	// MTUProbeSamples > 1 enables loss-aware probing: each candidate MTU is
 	// probed this many times and accepted only if its measured loss is at or
@@ -358,6 +364,7 @@ func defaultClientConfig() ClientConfig {
 		MTUTestTimeoutLogs:                   2.0,
 		MTUTestParallelismResolvers:          100,
 		MTUTestParallelismLogs:               32,
+		MTUBackgroundParallelism:             1,
 		MTUProbeSamples:                      1,
 		MTUMaxLoss:                           0.0,
 		MTUGroupGapRatio:                     0.25,
@@ -709,6 +716,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.MTUTestTimeoutLogs = defaultFloatAtMostZero(cfg.MTUTestTimeoutLogs, 2.0)
 	cfg.MTUTestParallelismResolvers = defaultIntBelow(cfg.MTUTestParallelismResolvers, 1, 100)
 	cfg.MTUTestParallelismLogs = defaultIntBelow(cfg.MTUTestParallelismLogs, 1, 32)
+	cfg.MTUBackgroundParallelism = clampInt(defaultIntBelow(cfg.MTUBackgroundParallelism, 1, 1), 1, 100)
 	cfg.MTUProbeSamples = defaultIntBelow(cfg.MTUProbeSamples, 1, 1)
 	if cfg.MTUMaxLoss < 0 {
 		cfg.MTUMaxLoss = 0

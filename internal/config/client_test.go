@@ -514,3 +514,18 @@ func TestClientConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
 		t.Fatalf("did not expect unset flag to appear in overrides: %#v", overrides.Values["MaxUploadMTU"])
 	}
 }
+
+func TestMTUBackgroundParallelismDefaultAndClamp(t *testing.T) {
+	if got := defaultClientConfig().MTUBackgroundParallelism; got != 1 {
+		t.Fatalf("default MTU_BACKGROUND_PARALLELISM = %d, want 1", got)
+	}
+	for _, tc := range []struct{ in, want int }{
+		{0, 1}, {-3, 1}, {1, 1}, {16, 16}, {100, 100}, {5000, 100},
+	} {
+		cfg := ClientConfig{MTUBackgroundParallelism: tc.in}
+		got := clampInt(defaultIntBelow(cfg.MTUBackgroundParallelism, 1, 1), 1, 100)
+		if got != tc.want {
+			t.Fatalf("clamp(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}

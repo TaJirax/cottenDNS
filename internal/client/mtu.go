@@ -247,10 +247,16 @@ func (c *Client) runFastConnectMTUTests(ctx context.Context) error {
 		}
 	}
 
+	// The background sweep runs behind a tunnel that already carries traffic, so
+	// it stays quiet by default (one resolver) but is tunable for anyone who
+	// would rather finish probing the fleet sooner. It can never exceed the
+	// initial worker count, which is already bounded by the resolver count.
+	backgroundWorkers := min(max(1, c.cfg.MTUBackgroundParallelism), workerCount)
+
 	go func() {
 		c.runAllMTUProbeWorkersWithLimit(ctx, uploadCaps, workerCount, counters, onValid, func() int {
 			if background.Load() {
-				return 1
+				return backgroundWorkers
 			}
 			return workerCount
 		})
