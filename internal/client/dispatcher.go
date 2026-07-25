@@ -16,6 +16,20 @@ import (
 	VpnProto "cottendns-go/internal/vpnproto"
 )
 
+// dispatchEntry is one round-robin slot: an active stream, or the orphan-queue
+// sentinel (id -1, nil stream). The dispatcher keeps these sorted by id and
+// rebuilds them only when the stream set changes, so the per-packet scan is a
+// slice walk instead of a map lookup per stream.
+//
+// ponytail: the scan still walks every open stream, idle or not. The server
+// side (sessionRecord.ActiveStreams) keeps a separate has-work set and walks
+// only that; mirror it here if profiles show the scan mattering again beyond
+// a few hundred streams.
+type dispatchEntry struct {
+	id     int32
+	stream *Stream_client
+}
+
 func (c *Client) selectTargetConnections(packetType uint8, streamID uint16) []Connection {
 	connections, err := c.selectTargetConnectionsForPacket(packetType, streamID)
 	if err != nil {
@@ -33,8 +47,7 @@ func (c *Client) asyncStreamDispatcher(ctx context.Context) {
 
 	var rrCursor int32 = -1
 	var cachedVersion uint64
-	var cachedIDs []int32
-	var cachedStreams map[uint16]*Stream_client
+	var cachedEntries []dispatchEntry
 	idlePoll := c.cfg.DispatcherIdlePollInterval()
 	idleTimer := time.NewTimer(idlePoll)
 	defer idleTimer.Stop()
@@ -85,37 +98,32 @@ func (c *Client) asyncStreamDispatcher(ctx context.Context) {
 dispatchLoop:
 	for {
 		currentVersion := c.streamSetVersion.Load()
-		if currentVersion != cachedVersion || cachedIDs == nil || cachedStreams == nil {
+		if currentVersion != cachedVersion || cachedEntries == nil {
 			c.streamsMu.RLock()
-			streamCount := len(c.active_streams)
-			ids := make([]int32, 0, streamCount+1)
-			streams := make(map[uint16]*Stream_client, streamCount)
+			entries := make([]dispatchEntry, 0, len(c.active_streams)+1)
 			for id, stream := range c.active_streams {
-				ids = append(ids, int32(id))
-				streams[id] = stream
+				entries = append(entries, dispatchEntry{id: int32(id), stream: stream})
 			}
 			c.streamsMu.RUnlock()
-			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-			cachedIDs = ids
-			cachedStreams = streams
+			sort.Slice(entries, func(i, j int) bool { return entries[i].id < entries[j].id })
+			cachedEntries = entries
 			cachedVersion = currentVersion
 		}
 
-		ids := cachedIDs
-		streams := cachedStreams
+		entries := cachedEntries
 
 		if c.orphanQueue != nil && c.orphanQueue.FastSize() > 0 {
-			ids = append(ids[:len(ids):len(ids)], -1)
+			entries = append(entries[:len(entries):len(entries)], dispatchEntry{id: -1})
 		}
 
-		if len(ids) == 0 {
+		if len(entries) == 0 {
 			if !waitForWork() {
 				return
 			}
 			continue
 		}
 
-		selected, peekedItem, selectedStreamID, selectedID := c.selectNextDispatchStream(ids, streams, &rrCursor)
+		selected, peekedItem, selectedStreamID, selectedID := c.selectNextDispatchStream(entries, &rrCursor)
 
 		if selectedID == -2 || peekedItem == nil {
 			if !waitForWork() {
@@ -185,7 +193,7 @@ dispatchLoop:
 			continue dispatchLoop
 		}
 
-		finalPacketType, finalPayload, wasPacked := c.packControlBlocks(item, selected, selectedID, selectedStreamID, ids, streams)
+		finalPacketType, finalPayload, wasPacked := c.packControlBlocks(item, selected, selectedID, selectedStreamID, entries)
 
 		c.pingManager.NotifyPacket(finalPacketType, false)
 
@@ -247,28 +255,23 @@ dispatchLoop:
 // is intentionally not cleared when a later orphan pick wins — callers key off
 // selectedID, and this preserves the pre-extraction behavior exactly.
 func (c *Client) selectNextDispatchStream(
-	ids []int32,
-	streams map[uint16]*Stream_client,
+	entries []dispatchEntry,
 	rrCursor *int32,
 ) (selected *Stream_client, peekedItem *clientStreamTXPacket, selectedStreamID uint16, selectedID int32) {
 	var peekedOK bool
 	selectedID = -2
 	rrApplied := false
 
-	startIndex := -1
-	for i, id := range ids {
-		if id >= *rrCursor {
-			startIndex = i
-			break
-		}
-	}
-	if startIndex == -1 {
+	// entries is sorted by id, so the round-robin resume point is a binary
+	// search rather than a scan.
+	startIndex := sort.Search(len(entries), func(i int) bool { return entries[i].id >= *rrCursor })
+	if startIndex == len(entries) {
 		startIndex = 0
 	}
 
-	for i := 0; i < len(ids); i++ {
-		idx := (startIndex + i) % len(ids)
-		id := ids[idx]
+	for i := 0; i < len(entries); i++ {
+		entry := entries[(startIndex+i)%len(entries)]
+		id := entry.id
 
 		if id == -1 {
 			if c.orphanQueue == nil || c.orphanQueue.FastSize() == 0 {
@@ -291,8 +294,16 @@ func (c *Client) selectNextDispatchStream(
 			selectedID = -1
 			peekedOK = true
 		} else {
-			s := streams[uint16(id)]
+			s := entry.stream
 			if s == nil || s.txQueue == nil {
+				continue
+			}
+			// FastSize is a lock-free atomic; Peek takes the queue mutex. Most
+			// streams in a browsing session are idle, and this scan runs once
+			// per dispatched packet over every stream, so skipping the lock on
+			// empty queues is what keeps the dispatcher off an O(streams)
+			// mutex-acquisition treadmill.
+			if s.txQueue.FastSize() == 0 {
 				continue
 			}
 			peekedItem, _, peekedOK = s.txQueue.Peek()
@@ -311,18 +322,18 @@ func (c *Client) selectNextDispatchStream(
 
 			if id == 0 && peekedItem.PacketType == Enums.PACKET_PING {
 				hasOtherWork := false
-				for _, otherID := range ids {
-					if otherID == 0 {
+				for _, other := range entries {
+					if other.id == 0 {
 						continue
 					}
-					if otherID == -1 {
+					if other.id == -1 {
 						if c.orphanQueue != nil && c.orphanQueue.FastSize() > 0 {
 							hasOtherWork = true
 							break
 						}
 						continue
 					}
-					os := streams[uint16(otherID)]
+					os := other.stream
 					if os != nil && os.txQueue != nil && os.txQueue.FastSize() > 0 {
 						hasOtherWork = true
 						break
@@ -357,8 +368,7 @@ func (c *Client) packControlBlocks(
 	selected *Stream_client,
 	selectedID int32,
 	selectedStreamID uint16,
-	ids []int32,
-	streams map[uint16]*Stream_client,
+	entries []dispatchEntry,
 ) (finalPacketType uint8, finalPayload []byte, wasPacked bool) {
 	maxBlocks := c.maxPackedBlocks
 	if maxBlocks < 1 {
@@ -404,7 +414,8 @@ func (c *Client) packControlBlocks(
 	}
 
 	if blocks < maxBlocks {
-		for _, otherID := range ids {
+		for _, other := range entries {
+			otherID := other.id
 			if blocks >= maxBlocks {
 				break
 			}
@@ -428,7 +439,7 @@ func (c *Client) packControlBlocks(
 				continue
 			}
 
-			otherStream := streams[uint16(otherID)]
+			otherStream := other.stream
 			if otherStream == nil || otherStream.txQueue == nil {
 				continue
 			}
