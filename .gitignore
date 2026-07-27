@@ -21,6 +21,7 @@ logs/
 *.tmp
 *.exe
 build/
+dist/
 .gocache/
 .gocache-audit/
 .bench/
