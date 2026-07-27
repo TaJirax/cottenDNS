@@ -5,10 +5,10 @@
 # Profile below is biased toward lossy / high-latency links with many resolvers.
 # ==============================================================================
 
-# Optional built-in profile. Keep "default" here, or use one of the bundled
-# paired preset files: client_config.speed.toml, client_config.survival.toml,
-# client_config.tcp-survival.toml.
-# CONFIG_PRESET = "default"
+# The desktop default is speed-first and adapts upward only when measured loss
+# requires redundancy. Use "survival" or "tcp-survival" only when deliberately
+# forcing a more conservative profile.
+CONFIG_PRESET = "speed"
 
 # ------------------------------------------------------------------------------
 # 1) Tunnel Identity & Security
@@ -35,21 +35,21 @@ DOMAINS = ["v.domain.com"]
 # Unset / empty = TXT only (historical behavior). Recognized:
 #   TXT, CNAME, A, AAAA, NULL, MX, NS, PTR, SRV, SVCB, CAA, NAPTR, SOA, HTTPS
 # Example: QUERY_TYPES = ["TXT", "CNAME", "NULL", "HTTPS"]
-QUERY_TYPES = ["TXT"]
+QUERY_TYPES = ["TXT", "HTTPS"]
 
 # When true, the duplicate copies of a packet (see *_PACKET_DUPLICATION_COUNT)
 # are sent across distinct tunnel domains where possible, instead of just
 # distinct resolvers (A6). This gives independent delivery paths on lossy links
 # and spreads query volume across domains. Has no effect with a single domain or
 # a duplication count of 1. Default false.
-DUPLICATION_PREFER_DISTINCT_DOMAINS = false
+DUPLICATION_PREFER_DISTINCT_DOMAINS = true
 
 # Tier-1 loss reducer: when true, the per-packet duplication count is scaled up
 # automatically from the configured base toward the number of copies needed to
 # reach ADAPTIVE_DUPLICATION_TARGET_DELIVERY at the measured loss, capped at 8.
 # (At very high loss the cap is hit and Reed-Solomon FEC, when enabled, takes
 # over.) Default false.
-ADAPTIVE_DUPLICATION = false
+ADAPTIVE_DUPLICATION = true
 # Target per-packet delivery probability adaptive duplication aims for
 # (0.5..0.999). Default 0.95.
 ADAPTIVE_DUPLICATION_TARGET_DELIVERY = 0.95
@@ -151,7 +151,7 @@ LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS = 60.0
 # 5 = MTU-weighted (active-pool resolvers get traffic in proportion to their
 #     download MTU, so faster resolvers carry proportionally more)
 # Modes 3 and 4 use runtime feedback from sends/successes.
-RESOLVER_BALANCING_STRATEGY = 3
+RESOLVER_BALANCING_STRATEGY = 5
 
 # How DNS queries reach resolvers:
 #   "auto" (default) - test UDP/53 and TCP/53 per resolver, then keep using the
@@ -300,20 +300,20 @@ EDNS_UDP_SIZE = 4096
 
 # Duplication for upload data packets (STREAM_DATA, STREAM_RESEND).
 # Clamped in code to [1, 8].
-UPLOAD_PACKET_DUPLICATION_COUNT = 3
+UPLOAD_PACKET_DUPLICATION_COUNT = 1
 
 # Duplication for download-ACK packets (STREAM_DATA_ACK, STREAM_DATA_NACK).
 # Clamped in code to [1, 8].
-DOWNLOAD_PACKET_DUPLICATION_COUNT = 7
+DOWNLOAD_PACKET_DUPLICATION_COUNT = 1
 
 # Duplication for upload setup packets (STREAM_SYN, SOCKS5_SYN).
 # Clamped in code to [UPLOAD_PACKET_DUPLICATION_COUNT, 8].
-UPLOAD_SETUP_PACKET_DUPLICATION_COUNT = 4
+UPLOAD_SETUP_PACKET_DUPLICATION_COUNT = 2
 
 # Duplication for download setup / control packets
 # (PACKED_CONTROL_BLOCKS, STREAM_CLOSE_READ, STREAM_CLOSE_WRITE).
 # Clamped in code to [DOWNLOAD_PACKET_DUPLICATION_COUNT, 8].
-DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT = 8
+DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT = 4
 
 # Stream-aware resolver failover.
 # If a stream keeps resending on the same preferred resolver, it can move.
@@ -386,7 +386,7 @@ DOWNLOAD_COMPRESSION_TYPE = 2
 
 # Minimum payload size before compression is attempted.
 # Must be >= 1.
-COMPRESSION_MIN_SIZE = 120
+COMPRESSION_MIN_SIZE = 180
 
 # ------------------------------------------------------------------------------
 # 6) MTU Discovery
@@ -408,8 +408,8 @@ MAX_DOWNLOAD_MTU = 4000
 # Separate values are used depending on STARTUP_MODE so a fast
 # log-based startup can use lighter probes than a full resolvers scan.
 # Retries and parallelism must be >= 1.
-MTU_TEST_RETRIES_RESOLVERS = 3
-MTU_TEST_TIMEOUT_RESOLVERS = 2.0
+MTU_TEST_RETRIES_RESOLVERS = 2
+MTU_TEST_TIMEOUT_RESOLVERS = 1.5
 MTU_TEST_PARALLELISM_RESOLVERS = 100
 MTU_TEST_RETRIES_LOGS = 5
 MTU_TEST_TIMEOUT_LOGS = 2.0
@@ -421,8 +421,8 @@ MTU_TEST_PARALLELISM_LOGS = 32
 # if its measured loss fraction is <= MTU_MAX_LOSS. Larger samples give a more
 # accurate per-resolver MTU at the cost of more probe traffic during startup.
 # = 1 (default) keeps the classic retry behavior.
-MTU_PROBE_SAMPLES = 1
-MTU_MAX_LOSS = 0.0
+MTU_PROBE_SAMPLES = 4
+MTU_MAX_LOSS = 0.25
 # Resolver clustering threshold: after probing, resolvers are grouped into MTU
 # bands; a new group starts wherever the gap between consecutive viable download
 # MTUs exceeds this fraction of the larger value (0.25 = 25%).
@@ -446,7 +446,12 @@ MTU_WEIGHTED_MIN_POOL = 2
 
 # Start once seven resolvers (or the whole smaller fleet) pass MTU probing.
 # Remaining resolvers are tested in the background at low priority.
-FAST_CONNECT = false
+FAST_CONNECT = true
+
+# Continue testing the remaining resolvers one at a time after Fast Connect has
+# established the session. One preserves foreground bandwidth while steadily
+# expanding the active/fallback pool.
+MTU_BACKGROUND_PARALLELISM = 1
 
 # ------------------------------------------------------------------------------
 # 7) Runtime Workers, Queues, and Timers
@@ -472,12 +477,12 @@ DISPATCHER_IDLE_POLL_INTERVAL_SECONDS = 0.020
 
 # Channel sizes for async TX/RX pipelines.
 # Clamped in code to [64, 65536].
-TX_CHANNEL_SIZE = 2048
-RX_CHANNEL_SIZE = 2048
+TX_CHANNEL_SIZE = 32768
+RX_CHANNEL_SIZE = 32768
 
 # UDP connection pool size per resolver key.
 # Clamped to [1, 1024].
-RESOLVER_UDP_CONNECTION_POOL_SIZE = 256
+RESOLVER_UDP_CONNECTION_POOL_SIZE = 1024
 
 # Initial queue/store capacities.
 # These reduce reallocations under many active streams.
@@ -517,7 +522,7 @@ SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS = 60.0
 # the same init arriving via several resolvers still yields exactly one session.
 # Higher values cost that many queries per attempt. 1 disables racing.
 # Clamped to [1, 8]. Default: 3.
-SESSION_INIT_RACING_COUNT = 3
+SESSION_INIT_RACING_COUNT = 5
 
 # Ping/keepalive pacing.
 # These control how aggressively the client sends ping traffic depending on
@@ -535,7 +540,7 @@ PING_COLD_THRESHOLD_SECONDS = 30.0
 # restarted. This recovers the "zombie" state where all resolvers are
 # silently dropping packets and no server-initiated reset (REJECT / BUSY /
 # ERROR_DROP) ever arrives. Clamped to [10s, 3600s]. Set to 0 to disable.
-PING_WATCHDOG_TIMEOUT_SECONDS = 300.0
+PING_WATCHDOG_TIMEOUT_SECONDS = 20.0
 
 # ------------------------------------------------------------------------------
 # 8) ARQ Reliability & Packing
@@ -546,13 +551,13 @@ PING_WATCHDOG_TIMEOUT_SECONDS = 300.0
 
 # Maximum control blocks packed together in one outgoing batch.
 # Clamped to [1, 64].
-MAX_PACKETS_PER_BATCH = 8
+MAX_PACKETS_PER_BATCH = 12
 
 # ARQ data/control behavior.
 # These values are clamped in code and should stay internally consistent.
-ARQ_WINDOW_SIZE = 1000
-ARQ_INITIAL_RTO_SECONDS = 0.6
-ARQ_MAX_RTO_SECONDS = 3.0
+ARQ_WINDOW_SIZE = 1500
+ARQ_INITIAL_RTO_SECONDS = 0.45
+ARQ_MAX_RTO_SECONDS = 2.5
 ARQ_CONTROL_INITIAL_RTO_SECONDS = 0.5
 ARQ_CONTROL_MAX_RTO_SECONDS = 2.0
 ARQ_MAX_CONTROL_RETRIES = 120
@@ -568,8 +573,8 @@ ARQ_DATA_NACK_MAX_GAP = 64
 
 # Minimum seconds between repeated NACKs for the same missing sequence number.
 # Clamped to [0.1s, 30s].
-ARQ_DATA_NACK_INITIAL_DELAY_SECONDS = 0.4
-ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
+ARQ_DATA_NACK_INITIAL_DELAY_SECONDS = 0.25
+ARQ_DATA_NACK_REPEAT_SECONDS = 0.5
 
 ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS = 120.0
 ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
@@ -622,7 +627,7 @@ STATS_REPORT_INTERVAL_SECONDS = 10.0
 #   "resolvers" = always start from client_resolvers.txt (full scan, no prompt)
 #   "logs"      = always start from log files (no prompt; falls back to full
 #                 scan when no usable log entries are found)
-STARTUP_MODE = "resolvers"
+STARTUP_MODE = "logs"
 
 # Maximum age (in days) of resolver cache log files that will be considered
 # during log-based startup.  0 means use all files regardless of age.
@@ -637,7 +642,7 @@ LOG_SCAN_MAX_RESOLVERS = 0
 # that the previously-known resolvers are still reachable.
 # When false (default), MTU testing is skipped and pre-known values are used
 # directly, giving the fastest possible startup time.
-LOG_BASED_MTU_VERIFY = true
+LOG_BASED_MTU_VERIFY = false
 
 # ------------------------------------------------------------------------------
 
