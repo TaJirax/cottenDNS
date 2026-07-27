@@ -729,9 +729,9 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 	}
 
 	var (
-		best       mtuConnectionProbeResult
-		bestReason = mtuRejectUpload
-		bestScore  = -1.0
+		chosen       mtuConnectionProbeResult
+		chosenReason = mtuRejectUpload
+		chosenOK     bool
 	)
 	for _, transport := range transports {
 		result, reason := c.probeConnectionMTUOver(ctx, conn, maxUploadPayload, transport)
@@ -740,22 +740,22 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 		if !ok {
 			// Preserve the most advanced rejection for useful diagnostics.
 			if reason == mtuRejectDownload {
-				best, bestReason = result, reason
+				chosen, chosenReason = result, reason
 			}
 			continue
 		}
 
-		score := float64(max(1, result.DownloadBytes)) * (1 - result.DownloadLoss)
-		rttMillis := float64(result.ResolveTime) / float64(time.Millisecond)
-		if rttMillis < 1 {
-			rttMillis = 1
-		}
-		score /= rttMillis
-		if score > bestScore {
-			best, bestReason, bestScore = result, mtuRejectNone, score
+		// Keep probing the full chain so every alternate is warm and measured,
+		// but synchronize the session from the first viable configured path.
+		// For "auto" that is UDP. A one-off faster/wider TCP probe must not set a
+		// session MTU that excludes otherwise usable UDP before real traffic has
+		// compared the paths. If UDP is rejected, TCP naturally becomes the
+		// first viable result.
+		if !chosenOK {
+			chosen, chosenReason, chosenOK = result, mtuRejectNone, true
 		}
 	}
-	return best, bestReason
+	return chosen, chosenReason
 }
 
 func (c *Client) probeConnectionMTUOver(

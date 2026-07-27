@@ -155,6 +155,95 @@ func TestBackgroundDiscoveryRetainsNarrowTransportMTUs(t *testing.T) {
 	}
 }
 
+func TestAutoTransportStartupKeepsViableUDPDespiteFasterTCPProbe(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now()
+	c.noteResolverTransportProbe("resolver-a", transportUDP, mtuConnectionProbeResult{
+		UploadBytes: 200, DownloadBytes: 1200, ResolveTime: 180 * time.Millisecond,
+	}, true, now)
+	c.noteResolverTransportProbe("resolver-a", transportTCP, mtuConnectionProbeResult{
+		UploadBytes: 220, DownloadBytes: 1400, ResolveTime: 40 * time.Millisecond,
+	}, true, now.Add(time.Millisecond))
+
+	if got := c.chooseResolverTransport(
+		"resolver-a",
+		Enums.PacketPriorityNormal,
+		now.Add(transportSwitchCooldown+time.Second),
+	).primary; got != transportUDP {
+		t.Fatalf("one faster TCP startup probe displaced viable UDP: got %s", got)
+	}
+
+	c.resolverTransportMu.Lock()
+	state := c.resolverTransportStateLocked("resolver-a")
+	got, _, ok := c.bestPacketTransportLocked(
+		"resolver-a",
+		state,
+		Enums.PACKET_STREAM_DATA,
+		100,
+	)
+	c.resolverTransportMu.Unlock()
+	if !ok || got != transportUDP {
+		t.Fatalf("bulk router bypassed viable preferred UDP: got=%s ok=%v", got, ok)
+	}
+}
+
+func TestAutoMTUSyncUsesFirstViableUDPNotFasterTCP(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	c.probeConnectionMTUOverFn = func(
+		_ context.Context,
+		_ *Connection,
+		_ int,
+		transport resolverTransport,
+	) (mtuConnectionProbeResult, mtuRejectReason) {
+		if transport == transportUDP {
+			return mtuConnectionProbeResult{
+				UploadBytes: 160, DownloadBytes: 900, ResolveTime: 180 * time.Millisecond,
+			}, mtuRejectNone
+		}
+		return mtuConnectionProbeResult{
+			UploadBytes: 240, DownloadBytes: 1500, ResolveTime: 30 * time.Millisecond,
+		}, mtuRejectNone
+	}
+
+	got, reason := c.probeConnectionMTU(
+		context.Background(),
+		&Connection{Key: "resolver-a", ResolverLabel: "192.0.2.53:53"},
+		250,
+	)
+	if reason != mtuRejectNone {
+		t.Fatalf("auto MTU probe rejected viable UDP: %v", reason)
+	}
+	if got.UploadBytes != 160 || got.DownloadBytes != 900 {
+		t.Fatalf("auto MTU sync selected faster TCP result instead of viable UDP: %+v", got)
+	}
+	if preferred := c.preferredResolverTransport("resolver-a"); preferred != transportUDP {
+		t.Fatalf("auto MTU sync did not retain UDP preference: %s", preferred)
+	}
+}
+
+func TestAutoTransportStartupUsesTCPWhenUDPProbeFails(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now()
+	c.noteResolverTransportProbe(
+		"resolver-a",
+		transportUDP,
+		mtuConnectionProbeResult{},
+		false,
+		now,
+	)
+	c.noteResolverTransportProbe("resolver-a", transportTCP, mtuConnectionProbeResult{
+		UploadBytes: 200, DownloadBytes: 1200, ResolveTime: 80 * time.Millisecond,
+	}, true, now.Add(time.Millisecond))
+
+	if got := c.chooseResolverTransport(
+		"resolver-a",
+		Enums.PacketPriorityNormal,
+		now.Add(time.Second),
+	).primary; got != transportTCP {
+		t.Fatalf("failed UDP did not fall back to viable TCP: got %s", got)
+	}
+}
+
 func TestAutoTransportKeepsPoisonedFastUDP(t *testing.T) {
 	c := newAutoTransportPolicyClient()
 	now := time.Now()

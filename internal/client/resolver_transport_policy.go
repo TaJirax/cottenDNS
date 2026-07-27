@@ -262,6 +262,24 @@ func (c *Client) bestPacketTransportLocked(
 	packetType uint8,
 	payloadSize int,
 ) (resolverTransport, float64, bool) {
+	// The configured/preferred transport owns normal traffic while it remains
+	// usable. In particular, an auto policy starts on UDP and a single startup
+	// MTU probe must not move the data plane to TCP merely because that probe
+	// completed faster. Runtime success samples are responsible for proving a
+	// meaningful speed advantage and updating state.preferred. An alternate is
+	// still selected immediately when the preferred path cannot carry this
+	// concrete packet, preserving packet-size-aware routing and hard failover.
+	preferred := pathScoreFor(state, state.preferred)
+	if pathSupportsPacket(preferred, packetType, payloadSize) &&
+		(preferred.probed ||
+			(packetType != Enums.PACKET_STREAM_DATA && packetType != Enums.PACKET_STREAM_RESEND)) {
+		value := pathEstimatedGoodputForPacket(preferred, packetType)
+		if !preferred.probed {
+			value = 0.0001
+		}
+		return state.preferred, value, true
+	}
+
 	var (
 		best      resolverTransport
 		bestScore = -1.0
@@ -496,10 +514,18 @@ func (c *Client) chooseResolverTransport(serverKey string, priority int, now tim
 		return resolverTransportDecision{primary: state.preferred}
 	}
 
-	best := c.bestResolverTransportLocked(serverKey, state)
-	if best != state.preferred && now.Sub(state.lastSwitch) >= transportSwitchCooldown {
-		state.preferred = best
-		state.lastSwitch = now
+	// Do not re-rank a healthy preferred path from startup probe RTT alone.
+	// noteResolverTransportSuccess performs speed promotion only after both
+	// paths have enough comparable runtime samples. Selection here is limited
+	// to availability/failure recovery.
+	current := pathScoreFor(state, state.preferred)
+	if !c.pathSupportsSession(current) || current.failureStreak >= transportFailureSwitchThreshold {
+		best := c.bestResolverTransportLocked(serverKey, state)
+		if best != state.preferred &&
+			(!current.viable || now.Sub(state.lastSwitch) >= transportSwitchCooldown) {
+			state.preferred = best
+			state.lastSwitch = now
+		}
 	}
 	decision := resolverTransportDecision{primary: state.preferred}
 
@@ -563,10 +589,17 @@ func (c *Client) noteResolverTransportProbe(
 	} else {
 		score.lastFailure = now
 	}
-	best := c.bestResolverTransportLocked(serverKey, state)
-	if best != state.preferred {
-		state.preferred = best
-		state.lastSwitch = now
+	// Probe results establish viability and MTU, not a speed verdict. Auto mode
+	// must give its first candidate (UDP) real traffic before a faster TCP probe
+	// can displace it. Move only when the current preferred path was measured
+	// unusable; runtime samples or explicit failures handle later promotions.
+	current := pathScoreFor(state, state.preferred)
+	if !c.pathSupportsSession(current) {
+		best := c.bestResolverTransportLocked(serverKey, state)
+		if best != state.preferred {
+			state.preferred = best
+			state.lastSwitch = now
+		}
 	}
 }
 
