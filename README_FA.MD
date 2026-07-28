@@ -17,6 +17,13 @@
 
 <p align="center">
   <a href="README.MD">English</a> ·
+  <a href="README_FA.MD">فارسی</a> ·
+  <a href="README_RU.MD">Русский</a> ·
+  <a href="README_ZH.MD">简体中文</a> ·
+  <a href="README_ES.MD">Español</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/TaJirax/CottenDns/releases/latest">آخرین Release</a> ·
   <a href="https://t.me/whitedns">کانال تلگرام</a>
 </p>
@@ -767,9 +774,9 @@ lineage پروژه:
 
 | مورد | مقدار |
 | --- | --- |
-| پروژه اصلی | Master DNS / MasterDnsVPN |
+| پروژه اصلی | [MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN) |
 | نویسنده اصلی | Amin Mahmoudi |
-| fork/source بالادستی | Null Route / NullRoute1970 |
+| fork/source بالادستی | [StormDNS](https://github.com/nullroute1970/StormDNS) توسط NullRoute1970 |
 | fork فعلی | CottenDns (مخزن `CottenDns`) |
 | نگهدارنده فعلی | tajirax |
 | License | MIT License |
