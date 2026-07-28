@@ -1,0 +1,6 @@
+# CottenDNS adaptive starting profile for scarce, high-latency connectivity.
+# It minimizes healthy duplication and background exploration bandwidth.
+
+CONFIG_PRESET = "cuba"
+DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+ENCRYPTION_KEY = ""

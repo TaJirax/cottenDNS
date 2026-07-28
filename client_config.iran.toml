@@ -1,0 +1,7 @@
+# CottenDNS adaptive starting profile for restrictive Iranian networks.
+# The engine remains UDP-first and changes transport per resolver only when
+# measured authenticated traffic proves that another path is better.
+
+CONFIG_PRESET = "iran"
+DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+ENCRYPTION_KEY = ""

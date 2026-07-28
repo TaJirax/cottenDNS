@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -587,14 +587,16 @@ func (c *Client) BuildConnectionMap() error {
 			}
 
 			indexByKey[key] = len(connections)
-			connections = append(connections, Connection{
+			connection := Connection{
 				Domain:        domain,
 				Resolver:      resolver.IP,
 				ResolverPort:  resolver.Port,
 				ResolverLabel: label,
 				Key:           key,
 				IsValid:       true,
-			})
+			}
+			connection.networkGroup = resolverNetworkGroup(connection)
+			connections = append(connections, connection)
 			if ip := net.ParseIP(resolver.IP); ip != nil {
 				c.resolverAddrCache[label] = &net.UDPAddr{IP: ip, Port: resolver.Port}
 			}

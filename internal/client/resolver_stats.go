@@ -164,10 +164,11 @@ type resolverSample struct {
 }
 
 type resolverTimeoutObservation struct {
-	serverKey string
-	transport resolverTransport
-	at        time.Time
-	key       resolverSampleKey
+	serverKey  string
+	transport  resolverTransport
+	packetType uint8
+	at         time.Time
+	key        resolverSampleKey
 }
 
 func (c *Client) resolverSampleTTL() time.Duration {
@@ -290,7 +291,12 @@ func (c *Client) trackResolverSendMetadata(
 
 	for _, observation := range timeoutObservations {
 		c.noteResolverTimeout(observation.serverKey, observation.at)
-		c.noteResolverTransportFailure(observation.serverKey, observation.transport, observation.at)
+		c.noteResolverTransportFailureForPacket(
+			observation.serverKey,
+			observation.transport,
+			observation.packetType,
+			observation.at,
+		)
 		c.replayPendingResolverSample(observation.key, failureReplayMaxDepth)
 	}
 	c.noteResolverSend(serverKey)
@@ -393,7 +399,13 @@ func (c *Client) trackResolverSuccessOverFingerprint(
 
 	c.recordTunnelResponse(receivedAt)
 	c.noteResolverSuccess(sample.serverKey, receivedAt.Sub(sample.sentAt))
-	c.noteResolverTransportSuccess(sample.serverKey, sample.transport, receivedAt.Sub(sample.sentAt), receivedAt)
+	c.noteResolverTransportSuccessForPacket(
+		sample.serverKey,
+		sample.transport,
+		receivedAt.Sub(sample.sentAt),
+		sample.packetType,
+		receivedAt,
+	)
 	return true
 }
 
@@ -423,11 +435,7 @@ func (c *Client) trackResolverFailure(packet []byte, addr *net.UDPAddr, localAdd
 }
 
 func (c *Client) trackResolverFailureOver(packet []byte, addr *net.UDPAddr, localAddr string, transport resolverTransport, failedAt time.Time) {
-	c.trackResolverFailureSeverityOver(packet, addr, localAddr, transport, failedAt, false)
-}
-
-func (c *Client) trackResolverHardFailureOver(packet []byte, addr *net.UDPAddr, localAddr string, transport resolverTransport, failedAt time.Time) {
-	c.trackResolverFailureSeverityOver(packet, addr, localAddr, transport, failedAt, true)
+	c.trackResolverFailureSeverityOver(packet, addr, localAddr, transport, failedAt)
 }
 
 func (c *Client) trackResolverFailureSeverityOver(
@@ -436,10 +444,41 @@ func (c *Client) trackResolverFailureSeverityOver(
 	localAddr string,
 	transport resolverTransport,
 	failedAt time.Time,
-	hard bool,
 ) {
-	if c == nil || len(packet) < 2 || addr == nil {
+	sample, ok := c.claimResolverFailedSample(packet, addr, localAddr, transport)
+	if !ok {
 		return
+	}
+	c.recordResolverHealthEvent(sample.serverKey, false, failedAt)
+	c.noteResolverTransportFailureForPacket(sample.serverKey, sample.transport, sample.packetType, failedAt)
+}
+
+// trackResolverResponseFailureOver handles a valid resolver-level rejection
+// such as SERVFAIL/REFUSED. It feeds resolver health and pacing, but does not
+// blame UDP/TCP: retrying the same overloaded resolver over another carrier
+// wastes time and can cause a false transport promotion.
+func (c *Client) trackResolverResponseFailureOver(
+	packet []byte,
+	addr *net.UDPAddr,
+	localAddr string,
+	transport resolverTransport,
+	failedAt time.Time,
+) {
+	sample, ok := c.claimResolverFailedSample(packet, addr, localAddr, transport)
+	if !ok {
+		return
+	}
+	c.recordResolverHealthEvent(sample.serverKey, false, failedAt)
+}
+
+func (c *Client) claimResolverFailedSample(
+	packet []byte,
+	addr *net.UDPAddr,
+	localAddr string,
+	transport resolverTransport,
+) (resolverSample, bool) {
+	if c == nil || len(packet) < 2 || addr == nil {
+		return resolverSample{}, false
 	}
 
 	fingerprint := dnsQuestionFingerprint(packet)
@@ -461,19 +500,27 @@ func (c *Client) trackResolverFailureSeverityOver(
 	}
 	c.resolverStatsMu.Unlock()
 
-	if !ok || sample.serverKey == "" {
-		return
+	if !ok || sample.serverKey == "" || sample.timedOut {
+		return resolverSample{}, false
 	}
-	if sample.timedOut {
-		return
-	}
+	return sample, true
+}
 
-	c.recordResolverHealthEvent(sample.serverKey, false, failedAt)
-	if hard {
-		c.noteResolverTransportHardFailure(sample.serverKey, sample.transport, failedAt)
-	} else {
-		c.noteResolverTransportFailure(sample.serverKey, sample.transport, failedAt)
+// trackResolverTruncationOver consumes the truncated request without counting
+// the resolver itself unhealthy. TC is a size/carrier signal; penalizing the
+// resolver would unnecessarily reduce useful UDP capacity.
+func (c *Client) trackResolverTruncationOver(
+	packet []byte,
+	addr *net.UDPAddr,
+	localAddr string,
+	transport resolverTransport,
+	failedAt time.Time,
+) {
+	sample, ok := c.claimResolverFailedSample(packet, addr, localAddr, transport)
+	if !ok {
+		return
 	}
+	c.noteResolverTransportTruncation(sample.serverKey, sample.transport, failedAt)
 }
 
 // resolverSampleLocked returns the exact fingerprinted sample, falling back to
@@ -552,7 +599,12 @@ func (c *Client) collectExpiredResolverTimeouts(now time.Time) {
 	c.resolverStatsMu.Unlock()
 	for _, observation := range timeoutObservations {
 		c.noteResolverTimeout(observation.serverKey, observation.at)
-		c.noteResolverTransportFailure(observation.serverKey, observation.transport, observation.at)
+		c.noteResolverTransportFailureForPacket(
+			observation.serverKey,
+			observation.transport,
+			observation.packetType,
+			observation.at,
+		)
 		c.replayPendingResolverSample(observation.key, failureReplayMaxDepth)
 	}
 }
@@ -586,12 +638,20 @@ func (c *Client) resolverPathRequestTimeout(serverKey string, transport resolver
 	c.resolverTransportMu.Lock()
 	state := c.resolverTransportStateLocked(serverKey)
 	score := pathScoreFor(state, transport)
-	successes, rtt := score.successes, score.rttEWMA
+	successes, rtt, variation := score.successes, score.rttEWMA, score.rttVariation
 	c.resolverTransportMu.Unlock()
 	if successes < transportSpeedSampleThreshold || rtt <= 0 {
 		return base
 	}
-	adaptive := 6*rtt + 500*time.Millisecond
+	// Passive RTT variance avoids declaring a lossy/jittery path dead based on
+	// its average alone. No probe traffic is required to learn this value.
+	adaptive := rtt + 4*variation + 500*time.Millisecond
+	// Slow censorship paths often pause without being dead. Preserve a
+	// conservative multiple of their observed RTT while still allowing fast,
+	// stable paths to detect a real blackhole promptly.
+	if slowPathFloor := 5*rtt + 500*time.Millisecond; adaptive < slowPathFloor {
+		adaptive = slowPathFloor
+	}
 	if adaptive < 1500*time.Millisecond {
 		adaptive = 1500 * time.Millisecond
 	}
@@ -646,10 +706,11 @@ func (c *Client) pruneResolverSamplesLocked(now time.Time) []resolverTimeoutObse
 				c.resolverPending[key] = sample
 				if sample.serverKey != "" {
 					timeoutObservations = append(timeoutObservations, resolverTimeoutObservation{
-						serverKey: sample.serverKey,
-						transport: sample.transport,
-						at:        sample.timedOutAt,
-						key:       key,
+						serverKey:  sample.serverKey,
+						transport:  sample.transport,
+						packetType: sample.packetType,
+						at:         sample.timedOutAt,
+						key:        key,
 					})
 				}
 			}

@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-00a36c?style=for-the-badge"></a>
   <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00add8?style=for-the-badge&logo=go&logoColor=white">
   <img alt="Transport" src="https://img.shields.io/badge/transport-DNS%20over%20UDP%2FTCP%2053-4f46e5?style=for-the-badge">
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Termux-f59e0b?style=for-the-badge">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-f59e0b?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -38,6 +38,7 @@ Recent work focused on staying usable on highly restrictive, lossy networks:
 - **DNS-over-TLS and DNS-over-HTTPS.** `RESOLVER_TRANSPORT = dot | doh` encrypts the client→resolver hop, so on networks that fingerprint plaintext DNS on 53 the tunnel looks like a device using an encrypted DNS provider. **A public resolver needs no server change at all** — keep the resolver IPs you already use (`1.1.1.1`, `8.8.8.8`, `9.9.9.9`); the encryption covers exactly the hop that gets fingerprinted, and the resolver still reaches your server through the normal delegation. Strictly opt-in (`auto` never escalates into them) and never a one-way door: if the TLS port is blocked the client falls back to **UDP → TCP/53** by itself. Verify-by-default, with SPKI pinning (`RESOLVER_TLS_PIN`) for a self-signed server. Details: [Engineering Notes §17](docs/ENGINEERING_CHANGES.md).
 - **Optional DoT/DoH server listeners that can share :443.** Only needed to point clients *directly* at this server. They reuse the same transport-agnostic packet handler as UDP/TCP, and TLS material resolves cert/key → ACME → self-signed so an enabled listener always comes up. `DOH_COEXIST_MODE` defaults to **never binding :443**, so a co-hosted panel (3x-ui, Hiddify, …) keeps the port and every inbound it supports — VMess/VLESS/Trojan, xhttp/gRPC/raw/ws/tls, CDN-fronted — keeps working untouched; taking the port is always an explicit choice. Both listeners off by default, and they draw from a capped connection sub-budget so flooding them can never starve the plain TCP/53 survival path.
 - **Adaptive per-resolver transport.** The server serves UDP/53 and TCP/53 on the same port. With `RESOLVER_TRANSPORT = auto`, the client measures both paths for every resolver and independently uses the fastest healthy one, so a poisoned or slow UDP resolver can move to TCP without forcing healthy resolvers to follow it. DoT/DoH remain user opt-ins. Every response channel (TXT/CNAME/A/NULL/HTTPS) works across the transport set.
+- **Unified path controller.** `PATH_CONTROLLER_MODE = "unified"` keeps upload/download evidence separate and gives duplication, FEC, probing, replay, and congestion one shared redundancy decision. `COMPARABLE_PATH_STRIPING = true` spreads successive bulk packets across mature near-equal paths without duplicating them. Both are client-only; `PATH_CONTROLLER_MODE = "legacy"` is an immediate rollback and requires no server change.
 - **Packet-size-aware joint routing.** Resolver and transport are scored as one path for each packet. A fast low-MTU backup remains in the pool for ACK/control and small fragments instead of being discarded, while large fragments stay on paths whose measured upload MTU can carry them. Background scans can therefore add capacity without lowering the session MTU.
 - **TCP survival-path guardrails.** TCP/53 is treated as a first-class fallback path: per-IP connection caps, optional per-connection query limits, read-idle timeouts, and write deadlines protect the listener while keeping persistent DNS-over-TCP useful.
 - **Paired config presets.** Bundled client/server pairs (`speed`, `survival`, `tcp-survival`) tune both sides together through `CONFIG_PRESET`, while explicit TOML/CLI values still override the profile.
@@ -433,6 +434,13 @@ For common network conditions, use matching client/server files from the release
 
 The underlying key is `CONFIG_PRESET`. Presets are a base layer only: any explicit TOML value or CLI override still wins.
 
+Client-only adaptive starting profiles are available as `iran`, `china`,
+`russia`, `venezuela`, `cuba`, and `low-bandwidth` (`africa` is an alias).
+They remain UDP-first, learn transport independently for every resolver, and
+need no server-side preset or protocol change. See
+[`CONFIG_PRESETS.md`](CONFIG_PRESETS.md) for the supplied TOML files and tuning
+details.
+
 ### 🔒 Encryption Methods
 
 | ID | Method | Practical Notes |
@@ -444,7 +452,7 @@ The underlying key is `CONFIG_PRESET`. Presets are a base layer only: any explic
 | `4` | AES-192-GCM | Authenticated encryption |
 | `5` | AES-256-GCM | Authenticated encryption |
 
-With `ENCRYPTION_AUTO_DETECT = true` (server default) the server builds a codec for every method from the shared key and detects which one each client used by trying to decrypt. Authenticated (AES-GCM) methods are tried first, so they can never be mis-detected by an unauthenticated codec. This lets clients change `DATA_ENCRYPTION_METHOD` without touching the server. Set it to `false` to accept only the configured method.
+With `ENCRYPTION_AUTO_DETECT = true` (server default) the server builds a codec for every keyed method and detects which one each client used by trying to decrypt. Authenticated AES-GCM methods are always exhausted before unauthenticated legacy decoders, regardless of the last method observed. XOR/ChaCha20 candidates additionally must match live session state or strict pre-session MTU semantics. This lets each client change `DATA_ENCRYPTION_METHOD` without touching the server across UDP, TCP/53, DoT, and DoH. Plaintext method `0` is included only when the server is explicitly configured for plaintext; set auto-detect to `false` to accept only the configured method.
 
 ### 🕵️ DNS Anti-Fingerprinting
 
@@ -530,6 +538,8 @@ So the worst case is that you end up exactly where you were before.
 | Key (client) | Default | Purpose |
 | --- | --- | --- |
 | `RESOLVER_TRANSPORT` | `auto` | `auto` \| `udp` \| `tcp` \| `dot` \| `doh` |
+| `PATH_CONTROLLER_MODE` | `unified` | `unified` coordinates directional scoring and redundancy; `legacy` restores the previous selector behavior. Client-only and wire-compatible. |
+| `COMPARABLE_PATH_STRIPING` | `true` | Send successive bulk packets over authenticated, well-measured paths with comparable score/RTT. Sends one copy and stops during congestion. |
 | `RESOLVER_TRANSPORT_PATHS` | `{}` | Optional per-resolver overrides, for example `{ "1.1.1.1" = "doh", "8.8.8.8" = "auto" }`. Keys may be resolver IPs, labels, or connection keys. |
 | `RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS` | `30` | Low-rate interval for remeasuring alternate paths one resolver at a time. |
 | `RESOLVER_TLS_SERVER_NAME` | *(empty)* | SNI/cert name. **Leave empty for public resolvers**; set it only when pointing at your own DoT/DoH server. |
@@ -636,7 +646,7 @@ The sample files are the source of truth for defaults and operational comments:
 | 🪪 Tunnel identity/security | `DOMAINS`, `DATA_ENCRYPTION_METHOD`, `ENCRYPTION_KEY`, `QUERY_TYPES`, `DNS_RANDOMIZE_QUERY_ID`, `DNS_EDNS_COOKIE`, `DNS_QNAME_CASE_RANDOMIZATION`, `EDNS_UDP_SIZE`, `RESOLVER_IGNORE_INJECTED_NXDOMAIN` |
 | 🧦 Local proxy | `PROTOCOL_TYPE`, `LISTEN_IP`, `LISTEN_PORT`, `SOCKS5_AUTH`, `SOCKS5_USER`, `SOCKS5_PASS` |
 | 📛 Local DNS | `LOCAL_DNS_ENABLED`, `LOCAL_DNS_IP`, `LOCAL_DNS_PORT`, `LOCAL_DNS_CACHE_MAX_RECORDS`, `LOCAL_DNS_CACHE_TTL_SECONDS`, `LOCAL_DNS_PENDING_TIMEOUT_SECONDS`, `DNS_RESPONSE_FRAGMENT_TIMEOUT_SECONDS`, `LOCAL_DNS_CACHE_PERSIST_TO_FILE`, `LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS` |
-| 📡 Resolver/loss handling | `RESOLVER_TRANSPORT`, `RESOLVER_TRANSPORT_PATHS`, `RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS`, `RESOLVER_BALANCING_STRATEGY`, `RESOLVER_RATE_LIMIT_ENABLED`, `UPLOAD_PACKET_DUPLICATION_COUNT`, `DOWNLOAD_PACKET_DUPLICATION_COUNT`, `UPLOAD_SETUP_PACKET_DUPLICATION_COUNT`, `DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT`, `STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD`, `STREAM_RESOLVER_FAILOVER_COOLDOWN`, `RECHECK_INACTIVE_SERVERS_ENABLED`, `RECHECK_INACTIVE_INTERVAL_SECONDS`, `RECHECK_SERVER_INTERVAL_SECONDS`, `RECHECK_BATCH_SIZE`, `AUTO_DISABLE_TIMEOUT_SERVERS`, `AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS`, `AUTO_DISABLE_MIN_OBSERVATIONS`, `AUTO_DISABLE_CHECK_INTERVAL_SECONDS`, `BASE_ENCODE_DATA`, `DUPLICATION_PREFER_DISTINCT_DOMAINS`, `ADAPTIVE_DUPLICATION`, `ADAPTIVE_DUPLICATION_TARGET_DELIVERY` |
+| 📡 Resolver/loss handling | `RESOLVER_TRANSPORT`, `PATH_CONTROLLER_MODE`, `COMPARABLE_PATH_STRIPING`, `RESOLVER_TRANSPORT_PATHS`, `RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS`, `RESOLVER_BALANCING_STRATEGY`, `RESOLVER_RATE_LIMIT_ENABLED`, `UPLOAD_PACKET_DUPLICATION_COUNT`, `DOWNLOAD_PACKET_DUPLICATION_COUNT`, `UPLOAD_SETUP_PACKET_DUPLICATION_COUNT`, `DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT`, `STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD`, `STREAM_RESOLVER_FAILOVER_COOLDOWN`, `RECHECK_INACTIVE_SERVERS_ENABLED`, `RECHECK_INACTIVE_INTERVAL_SECONDS`, `RECHECK_SERVER_INTERVAL_SECONDS`, `RECHECK_BATCH_SIZE`, `AUTO_DISABLE_TIMEOUT_SERVERS`, `AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS`, `AUTO_DISABLE_MIN_OBSERVATIONS`, `AUTO_DISABLE_CHECK_INTERVAL_SECONDS`, `BASE_ENCODE_DATA`, `DUPLICATION_PREFER_DISTINCT_DOMAINS`, `ADAPTIVE_DUPLICATION`, `ADAPTIVE_DUPLICATION_TARGET_DELIVERY` |
 | 📦 Compression | `UPLOAD_COMPRESSION_TYPE`, `DOWNLOAD_COMPRESSION_TYPE`, `COMPRESSION_MIN_SIZE` |
 | 📏 MTU discovery | `MIN_UPLOAD_MTU`, `MIN_DOWNLOAD_MTU`, `MAX_UPLOAD_MTU`, `MAX_DOWNLOAD_MTU`, `MTU_TEST_RETRIES_RESOLVERS`, `MTU_TEST_TIMEOUT_RESOLVERS`, `MTU_TEST_PARALLELISM_RESOLVERS`, `MTU_TEST_RETRIES_LOGS`, `MTU_TEST_TIMEOUT_LOGS`, `MTU_TEST_PARALLELISM_LOGS`, `MTU_PROBE_SAMPLES`, `MTU_MAX_LOSS`, `MTU_GROUP_GAP_RATIO`, `MTU_ADAPTIVE_GROUPING` |
 | ⚙️ Workers/queues/timers | `RX_TX_WORKERS`, `TUNNEL_PROCESS_WORKERS`, `TUNNEL_PACKET_TIMEOUT_SECONDS`, `DISPATCHER_IDLE_POLL_INTERVAL_SECONDS`, `TX_CHANNEL_SIZE`, `RX_CHANNEL_SIZE`, `RESOLVER_UDP_CONNECTION_POOL_SIZE`, `STREAM_QUEUE_INITIAL_CAPACITY`, `ORPHAN_QUEUE_INITIAL_CAPACITY`, `DNS_RESPONSE_FRAGMENT_STORE_CAPACITY`, `SOCKS_UDP_ASSOCIATE_READ_TIMEOUT_SECONDS`, `CLIENT_TERMINAL_STREAM_RETENTION_SECONDS`, `CLIENT_CANCELLED_SETUP_RETENTION_SECONDS` |
@@ -796,13 +806,9 @@ sequenceDiagram
 
 ## 📱 Mobile And LAN Usage
 
-Android CI should check out CottenDNS at an immutable commit or tag and build
-the four ABI payloads from this repository. Do not maintain a second modified
-engine copy inside the app. See
-[Android external-engine integration](docs/ANDROID_ENGINE_INTEGRATION.md) for
-the build command, ABI outputs, configuration keys, and revision contract.
-
-There is no official mobile app in this repository.
+There is no mobile app, Android build script, or Android binary artifact in this
+repository. Android applications import a pinned CottenDNS source revision and
+own their engine compilation and packaging in the Android repository.
 
 Usable options:
 
@@ -810,7 +816,6 @@ Usable options:
 | --- | --- |
 | 🖥️ LAN proxy | Run the client on a computer and let phones use it as SOCKS5 over LAN |
 | 📦 Router/VPS client | Run the client on a router, mini PC, or VPS and point devices at it |
-| 📱 Termux | Use Termux artifacts where supported by the release matrix |
 | 🔗 Chaining | Chain another local proxy/panel into the CottenDns SOCKS5 listener |
 
 If another device must connect to the client over LAN:
@@ -841,7 +846,7 @@ CottenDns_Server_<Platform>_<ARCH>.zip
 CottenDns_Server_<Platform>_<ARCH>.tar.gz
 ```
 
-The GitHub Actions release matrix includes Windows, Linux, Linux-Legacy, macOS, and Termux/Android targets. Client packages include the executable, `client_config.toml`, paired `client_config.*.toml` presets, `client_resolvers.txt`, `CONFIG_PRESETS.md`, and the engineering notes. Linux client packages also include `client_linux_install.sh`. Server packages include the executable, `server_config.toml`, paired `server_config.*.toml` presets, `CONFIG_PRESETS.md`, and the engineering notes.
+The GitHub Actions release matrix includes Windows, Linux, Linux-Legacy, and macOS targets. Client packages include the executable, `client_config.toml`, paired `client_config.*.toml` presets, `client_resolvers.txt`, `CONFIG_PRESETS.md`, and the engineering notes. Linux client packages also include `client_linux_install.sh`. Server packages include the executable, `server_config.toml`, paired `server_config.*.toml` presets, `CONFIG_PRESETS.md`, and the engineering notes.
 
 <a id="development"></a>
 

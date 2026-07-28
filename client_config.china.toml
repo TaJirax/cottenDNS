@@ -1,0 +1,6 @@
+# CottenDNS adaptive starting profile for networks affected by DNS injection.
+# Runtime measurements, not the country name, control resolver/path promotion.
+
+CONFIG_PRESET = "china"
+DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+ENCRYPTION_KEY = ""

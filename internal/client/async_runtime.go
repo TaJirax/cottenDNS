@@ -309,6 +309,10 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 	c.runtimeOriginalSends.Store(0)
 	c.warmPathBudgetSends.Store(0)
 	c.warmPathLastScanUnix.Store(c.now().UnixNano())
+	c.transportExploreBudgetSends.Store(0)
+	c.pathStripeCursor.Store(0)
+	c.pathStripeCount.Store(0)
+	c.pathRedundancySuppressed.Store(0)
 
 	c.log.Infof("\U0001F4E1 <cyan>Async Runtime Initialized: <green>%d RX/TX Workers</green>, <green>%d Processors</green></cyan>",
 		c.tunnelRX_TX_Workers, c.tunnelProcessWorkers)
@@ -763,7 +767,7 @@ func (c *Client) sendRuntimeFrameOver(
 			return true
 		} else {
 			c.recordResolverHealthEvent(frame.serverKey, false, now)
-			c.noteResolverTransportFailure(frame.serverKey, transportUDP, now)
+			c.noteResolverTransportFailureForPacket(frame.serverKey, transportUDP, frame.packetType, now)
 		}
 		return false
 	}
@@ -774,7 +778,7 @@ func (c *Client) sendRuntimeFrameOver(
 			return true
 		}
 	}
-	c.noteResolverTransportFailure(frame.serverKey, transport, now)
+	c.noteResolverTransportFailureForPacket(frame.serverKey, transport, frame.packetType, now)
 	return false
 }
 
@@ -1010,10 +1014,10 @@ func (c *Client) handleInboundPacketOver(data []byte, addr *net.UDPAddr, localAd
 			receivedAt := time.Now()
 			if parsed, parseErr := DnsParser.ParsePacketLite(data); parseErr == nil {
 				if transport == transportUDP && parsed.Header.TC != 0 {
-					// TC=1 is a direct indication that this UDP carrier cannot
-					// deliver the answer. Consume the attempt as a hard path
-					// failure so the resolver moves to TCP without waiting for
-					// repeated timeouts. ARQ retains the native frame.
+					// TC=1 says this answer did not fit; it does not prove UDP
+					// is unusable. Replay this request immediately, then let
+					// repeated consecutive truncations decide whether TCP
+					// should become preferred.
 					c.replayPendingResolverSample(resolverSampleKey{
 						resolverAddr:        addr.String(),
 						localAddr:           localAddr,
@@ -1021,7 +1025,7 @@ func (c *Client) handleInboundPacketOver(data []byte, addr *net.UDPAddr, localAd
 						transport:           transport,
 						questionFingerprint: dnsQuestionFingerprint(data),
 					}, failureReplayMaxDepth)
-					c.trackResolverHardFailureOver(data, addr, localAddr, transport, receivedAt)
+					c.trackResolverTruncationOver(data, addr, localAddr, transport, receivedAt)
 					return
 				}
 				if parsed.Header.RCode != 0 && c.rcodeIsInjectedNoise(parsed.Header.RCode) {
@@ -1035,7 +1039,7 @@ func (c *Client) handleInboundPacketOver(data []byte, addr *net.UDPAddr, localAd
 					return
 				}
 				if parsed.Header.RCode != 0 {
-					c.trackResolverFailureOver(data, addr, localAddr, transport, receivedAt)
+					c.trackResolverResponseFailureOver(data, addr, localAddr, transport, receivedAt)
 				}
 			}
 			// summary := DnsParser.DescribeResponseWithoutTunnelPayload(data)

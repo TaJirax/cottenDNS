@@ -17,12 +17,27 @@ func normalizeConfigPresetName(name string) string {
 	switch name {
 	case "tcp", "tcp-survival", "tcp-survive":
 		return "tcp-survival"
+	case "africa", "africa-low-bandwidth", "constrained":
+		return "low-bandwidth"
 	default:
 		return name
 	}
 }
 
-func isKnownConfigPreset(name string) bool {
+const clientConfigPresetNames = "default, speed, survival, tcp-survival, iran, china, russia, venezuela, cuba, low-bandwidth"
+const serverConfigPresetNames = "default, speed, survival, tcp-survival"
+
+func isKnownClientConfigPreset(name string) bool {
+	switch normalizeConfigPresetName(name) {
+	case "default", "speed", "survival", "tcp-survival",
+		"iran", "china", "russia", "venezuela", "cuba", "low-bandwidth":
+		return true
+	default:
+		return false
+	}
+}
+
+func isKnownServerConfigPreset(name string) bool {
 	switch normalizeConfigPresetName(name) {
 	case "default", "speed", "survival", "tcp-survival":
 		return true
@@ -55,8 +70,8 @@ func applyClientConfigPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) 
 		return nil
 	}
 	preset := normalizeConfigPresetName(cfg.ConfigPreset)
-	if !isKnownConfigPreset(preset) {
-		return invalidConfigPresetError(preset)
+	if !isKnownClientConfigPreset(preset) {
+		return invalidConfigPresetError(preset, clientConfigPresetNames)
 	}
 	cfg.ConfigPreset = preset
 
@@ -67,6 +82,18 @@ func applyClientConfigPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) 
 		applyClientSurvivalPreset(cfg, isDefined)
 	case "tcp-survival":
 		applyClientTCPSurvivalPreset(cfg, isDefined)
+	case "iran":
+		applyClientIranPreset(cfg, isDefined)
+	case "china":
+		applyClientChinaPreset(cfg, isDefined)
+	case "russia":
+		applyClientRussiaPreset(cfg, isDefined)
+	case "venezuela":
+		applyClientVenezuelaPreset(cfg, isDefined)
+	case "cuba":
+		applyClientCubaPreset(cfg, isDefined)
+	case "low-bandwidth":
+		applyClientLowBandwidthPreset(cfg, isDefined)
 	}
 	return nil
 }
@@ -76,8 +103,8 @@ func applyServerConfigPreset(cfg *ServerConfig, isDefined configKeyDefinedFunc) 
 		return nil
 	}
 	preset := normalizeConfigPresetName(cfg.ConfigPreset)
-	if !isKnownConfigPreset(preset) {
-		return invalidConfigPresetError(preset)
+	if !isKnownServerConfigPreset(preset) {
+		return invalidConfigPresetError(preset, serverConfigPresetNames)
 	}
 	cfg.ConfigPreset = preset
 
@@ -92,16 +119,17 @@ func applyServerConfigPreset(cfg *ServerConfig, isDefined configKeyDefinedFunc) 
 	return nil
 }
 
-func invalidConfigPresetError(name string) error {
-	return presetError{name: name}
+func invalidConfigPresetError(name, valid string) error {
+	return presetError{name: name, valid: valid}
 }
 
 type presetError struct {
-	name string
+	name  string
+	valid string
 }
 
 func (e presetError) Error() string {
-	return "invalid CONFIG_PRESET: " + e.name + " (valid: default, speed, survival, tcp-survival)"
+	return "invalid CONFIG_PRESET: " + e.name + " (valid: " + e.valid + ")"
 }
 
 func applyClientSpeedPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
@@ -205,6 +233,104 @@ func applyClientTCPSurvivalPreset(cfg *ClientConfig, isDefined configKeyDefinedF
 	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 63)
 	setClientInt(isDefined, "EDNS_UDP_SIZE", &cfg.EDNSUDPSize, 4096)
 	setClientStrings(isDefined, "QUERY_TYPES", &cfg.QueryTypes, []string{"TXT", "HTTPS"})
+}
+
+// Country presets are adaptive starting points, not protocol modes. They tune
+// only client-to-resolver behavior and leave the CottenDNS tunnel wire format
+// unchanged, so native and legacy MasterDNS/StormDNS servers keep working.
+// Runtime per-resolver measurements are still authoritative and may promote a
+// demonstrably faster transport for one resolver without moving the whole pool.
+func applyClientHostileNetworkBaseline(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientSpeedPreset(cfg, isDefined)
+	setClientString(isDefined, "RESOLVER_TRANSPORT", &cfg.ResolverTransport, "auto")
+	setClientInt(isDefined, "UPLOAD_PACKET_DUPLICATION_COUNT", &cfg.UploadPacketDuplicationCount, 1)
+	setClientInt(isDefined, "DOWNLOAD_PACKET_DUPLICATION_COUNT", &cfg.DownloadPacketDuplicationCount, 1)
+	setClientBool(isDefined, "DUPLICATION_PREFER_DISTINCT_DOMAINS", &cfg.DuplicationPreferDistinctDomains, true)
+	setClientBool(isDefined, "ADAPTIVE_DUPLICATION", &cfg.AdaptiveDuplication, true)
+	setClientBool(isDefined, "RESOLVER_RATE_LIMIT_ENABLED", &cfg.ResolverRateLimitEnabled, true)
+	setClientBool(isDefined, "DNS_RANDOMIZE_QUERY_ID", &cfg.DNSRandomizeQueryID, true)
+	setClientBool(isDefined, "RESOLVER_IGNORE_INJECTED_NXDOMAIN", &cfg.ResolverIgnoreInjectedNXDOMAIN, true)
+	setClientBool(isDefined, "MTU_ADAPTIVE_GROUPING", &cfg.MTUAdaptiveGrouping, true)
+	setClientInt(isDefined, "MTU_BACKGROUND_PARALLELISM", &cfg.MTUBackgroundParallelism, 1)
+	setClientInt(isDefined, "EDNS_UDP_SIZE", &cfg.EDNSUDPSize, 1232)
+	setClientStrings(isDefined, "QUERY_TYPES", &cfg.QueryTypes, []string{"TXT"})
+}
+
+func applyClientIranPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientHostileNetworkBaseline(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 3)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 5)
+	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.97)
+	setClientInt(isDefined, "MIN_UPLOAD_MTU", &cfg.MinUploadMTU, 80)
+	setClientInt(isDefined, "MAX_UPLOAD_MTU", &cfg.MaxUploadMTU, 180)
+	setClientInt(isDefined, "MIN_DOWNLOAD_MTU", &cfg.MinDownloadMTU, 700)
+	setClientInt(isDefined, "MAX_DOWNLOAD_MTU", &cfg.MaxDownloadMTU, 2500)
+	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 5)
+	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.35)
+	setClientInt(isDefined, "MTU_TEST_PARALLELISM_RESOLVERS", &cfg.MTUTestParallelismResolvers, 48)
+	setClientFloat(isDefined, "MTU_TEST_TIMEOUT_RESOLVERS", &cfg.MTUTestTimeoutResolvers, 2.5)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 45)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 42)
+	setClientInt(isDefined, "MAX_PACKETS_PER_BATCH", &cfg.MaxPacketsPerBatch, 8)
+}
+
+func applyClientChinaPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientHostileNetworkBaseline(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 3)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 4)
+	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.96)
+	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 4)
+	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.25)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 45)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 42)
+}
+
+func applyClientRussiaPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientHostileNetworkBaseline(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 2)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 4)
+	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.95)
+	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 4)
+	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.25)
+	setClientFloat(isDefined, "MTU_TEST_TIMEOUT_RESOLVERS", &cfg.MTUTestTimeoutResolvers, 2.5)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 30)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 63)
+}
+
+func applyClientVenezuelaPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientHostileNetworkBaseline(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 3)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 5)
+	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.96)
+	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 4)
+	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.30)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 45)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 42)
+}
+
+func applyClientCubaPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientLowBandwidthPreset(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 2)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 3)
+	setClientFloat(isDefined, "MTU_TEST_TIMEOUT_RESOLVERS", &cfg.MTUTestTimeoutResolvers, 3.0)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 90)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 42)
+}
+
+func applyClientLowBandwidthPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientHostileNetworkBaseline(cfg, isDefined)
+	setClientInt(isDefined, "UPLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.UploadSetupPacketDuplicationCount, 2)
+	setClientInt(isDefined, "DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT", &cfg.DownloadSetupPacketDuplicationCount, 3)
+	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.94)
+	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 3)
+	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.30)
+	setClientInt(isDefined, "MTU_TEST_PARALLELISM_RESOLVERS", &cfg.MTUTestParallelismResolvers, 24)
+	setClientFloat(isDefined, "MTU_TEST_TIMEOUT_RESOLVERS", &cfg.MTUTestTimeoutResolvers, 3.0)
+	setClientFloat(isDefined, "RESOLVER_TRANSPORT_BACKGROUND_SCAN_INTERVAL_SECONDS", &cfg.ResolverTransportBackgroundScanIntervalSec, 90)
+	setClientInt(isDefined, "SESSION_INIT_RACING_COUNT", &cfg.SessionInitRacingCount, 3)
+	setClientInt(isDefined, "MAX_PACKETS_PER_BATCH", &cfg.MaxPacketsPerBatch, 6)
+	setClientInt(isDefined, "COMPRESSION_MIN_SIZE", &cfg.CompressionMinSize, 96)
+	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 42)
 }
 
 func applyServerSpeedPreset(cfg *ServerConfig, isDefined configKeyDefinedFunc) {

@@ -7,16 +7,14 @@ helps** on hostile DNS networks. Honest caveats are called out where they exist.
 
 ---
 
-## Android engine ownership and embedding
+## External mobile engine boundary
 
-The Android-facing engine is now maintained in this repository instead of as a
-modified source copy inside the app. Android CI checks out an immutable
-CottenDNS revision and builds all four ABIs with
-`scripts/build-android-client.sh`. This removes the source/binary drift that can
-make branch builds work while merged-main builds silently package an older
-engine.
+This repository owns the portable engine source only. Mobile repositories pin
+and import a reviewed CottenDNS revision, then own all Android compilation,
+packaging, signing, and release logic. CottenDNS intentionally ships no Android
+build scripts or binary artifacts.
 
-The standalone client includes the app integration contract:
+The portable client source includes the engine behavior:
 
 - Fast Connect releases startup after a safe MTU-tested pool is available,
   throttles the remaining scan to background priority, and promotes newly found
@@ -30,9 +28,6 @@ The standalone client includes the app integration contract:
   sockets from consuming the engine indefinitely.
 - Generic UDP, fallback to the DNS-specific UDP path, loss recovery, adaptive
   duplication, and server fairness remain in the same versioned source.
-
-The Android integration and pinned-revision rules are documented in
-`docs/ANDROID_ENGINE_INTEGRATION.md`.
 
 ---
 
@@ -228,7 +223,18 @@ change its encryption method without the server being reconfigured.
 (3–5 are AEAD). With `ENCRYPTION_AUTO_DETECT` (default true), the server builds a
 codec set and trial-decrypts each inbound frame, **AEAD methods first** (they
 authenticate, so they cannot be mis-detected), falling back to the unauthenticated
-ciphers. The first codec that yields a valid frame is used.
+ciphers. Runtime preference is preserved inside each security class, but it can
+never move XOR, ChaCha20, or plaintext ahead of an AES-GCM candidate.
+
+The unauthenticated legacy methods need an additional rule: a one-byte header
+check alone cannot prove which stream cipher produced a frame. Their decoded
+candidates are therefore checked against live session ID/cookie/layout state.
+Pre-session MTU candidates also have their response mode, requested download
+size, and zero-filled capacity padding validated before a legacy codec may claim
+them. If an old or malformed pre-session frame matches none of those stricter
+rules, the historical structural fallback remains available, preserving old
+MasterDNS/StormDNS admission rather than turning hardening into a compatibility
+break.
 
 **Why it helps.** A client can pick a rarer/stronger cipher (or rotate) and the
 server simply reads it. AEAD-first ordering avoids false positives from the
@@ -1159,11 +1165,11 @@ fastest working option.
 
 Question fingerprints canonicalize ASCII letter case because DNS names are
 case-insensitive; resolvers that normalize 0x20 casing are accepted without
-weakening QTYPE/QCLASS or name matching. UDP replies carrying `TC=1` are treated
-as explicit hard path failures and move that resolver toward TCP immediately
-instead of spending multiple timeout windows on an answer that cannot fit.
-Poison evidence accelerates a following timeout for two minutes, then expires so
-an old incident cannot make a clean future network overly sensitive.
+weakening QTYPE/QCLASS or name matching. A UDP reply carrying `TC=1` replays the
+affected request immediately, but UDP is displaced only after repeated
+truncation evidence without an intervening valid reply. Poison evidence
+accelerates a following timeout for two minutes, then expires so an old incident
+cannot make a clean future network overly sensitive.
 
 An unusually fast forged response also acts as a Happy-Eyeballs trigger. The
 still-pending query is raced once on the best alternate path; the original is not
@@ -1201,6 +1207,88 @@ dynamic. The server's Super-FEC band now chooses enough parity for a 90% modeled
 block-recovery target, within Reed-Solomon and configured caps. Randomized loss
 tests exercise actual encoding and reconstruction at 40% and 84% loss; ARQ
 remains the correctness backstop when a block exceeds its parity budget.
+
+---
+
+## 26. Unified directional path and redundancy controller
+
+`PATH_CONTROLLER_MODE = "unified"` coordinates the client-side mechanisms that
+previously made partially independent decisions. It adds no protocol fields and
+requires no server change. `PATH_CONTROLLER_MODE = "legacy"` immediately
+restores the preceding behavior for field rollback.
+
+Each resolver/transport now retains separate authenticated upload and download
+delivery EWMAs, sample confidence, RTT, and failure streaks. A failed ACK poll no
+longer reduces the score of an otherwise healthy upload path, and one fast sample
+cannot outrank a mature path. Packet-size MTU eligibility and the existing
+transport hysteresis remain mandatory gates.
+
+The controller produces one decision per packet. During queue pressure it
+suppresses only copies added by adaptive duplication, never the configured base.
+Recent download FEC retains the established two-poll diversity cap, and healthy
+exploration cannot stack on FEC or existing duplication. Poison/failure recovery
+hedges remain available for high-priority traffic, while ARQ remains the
+eventual-delivery backstop.
+
+With `COMPARABLE_PATH_STRIPING = true`, successive bulk upload packets may rotate
+across at most four resolver paths. A candidate needs at least three
+authenticated directional samples, at least 85% of the primary delivered score,
+and RTT within 35% of the primary. Striping sends exactly one copy, stops when
+queues are congested, and never admits an unknown or materially slower path.
+Weighted multiplicative stepping avoids long bursts on one resolver.
+
+Traffic telemetry reports `stripe` decisions and `saved` redundant copies beside
+exploration and transport-switch counters. This makes the controller observable
+without adding probe traffic.
+
+---
+
+## 27. Final controller and dynamic-encryption validation
+
+The final bug hunt found that rotating the server's last-successful codec index
+could put an unauthenticated decoder ahead of an authenticated one. A random
+legacy decode occasionally passed the compact header check, causing admission
+telemetry to credit the wrong method. Codec iteration is now two-phase and
+allocation-free: every AES-GCM candidate is exhausted first, followed by the
+legacy class in preferred order. Established legacy candidates must match active
+session state, and MTU discovery uses the semantic checks described in section 5.
+
+Dynamic server behavior was tested as a response-producing matrix, not merely as
+"packet accepted": every enabled encryption method was sent through UDP, TCP/53,
+DoT, and DoH, and the returned native MTU response had to contain the original
+four-byte verification nonce. A keyed server accepted methods 1-5; a server
+explicitly configured to allow plaintext accepted methods 0-5. The plaintext
+method remains excluded when the configured server method is encrypted.
+
+Validation on the 2026-07-29 working tree:
+
+- complete uncached repository tests and `go vet`;
+- complete repository race detector;
+- hostile-network race matrix repeated 20 times, covering poison, question
+  hijack, in-flight replay, MTU path selection, UDP/TCP/DoT/DoH, and 40%/75%/84%
+  FEC reconstruction;
+- mixed codec admission repeated 200 times and the response-producing
+  transport/encryption matrix repeated 10 times;
+- country, legacy, and native profile loading repeated 50 times;
+- shuffled complete client tests repeated 10 times;
+- Linux/Windows client and server packaging through `build.py`; and
+- all engine packages cross-compiled for Android arm64, armv7, amd64, and 386
+  with CGO disabled.
+
+The unified controller's clean decision costs 19.42-19.95 ns with zero
+allocations. The sixteen-resolver joint selector measures 3.48-3.57 microseconds
+with three allocations. Under congestion, an adaptive five-copy decision is
+reduced to the configured one-copy base (80% fewer redundant frames). In a
+two-comparable-path simulation, 1000 one-copy bulk packets split 526/474 without
+duplication. Directional evidence retained 100% of a healthy direction's score
+after the opposite direction failed; legacy shared evidence retained 29.2%.
+
+The local one-resolver end-to-end A/B result is intentionally conservative:
+unified and legacy modes were within loopback noise (median upload +0.8%,
+download +0.5% for unified). The controller is not claiming artificial
+single-path bandwidth. Its measurable gain appears when paths diverge or queues
+fill: it avoids redundant congestion, stops cross-direction false demotion, and
+uses comparable capacity without adding copies.
 
 ---
 

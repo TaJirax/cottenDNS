@@ -11,6 +11,7 @@ import (
 )
 
 const warmPathForegroundFramesPerScan = uint64(4096)
+const warmPathMinimumIdle = 750 * time.Millisecond
 
 type resolverHealthEvent struct {
 	At time.Time
@@ -265,6 +266,16 @@ func (c *Client) allowWarmPathExploration(now time.Time, interval time.Duration)
 	if c == nil || c.runtimeCongested() {
 		return false
 	}
+	// A warm scan may issue dozens of MTU queries. Even when its accounting
+	// budget has accrued, it must wait for a real foreground gap so health work
+	// never steals capacity or queue time from the user.
+	if len(c.txChannel) != 0 || len(c.encodedTXChannel) != 0 || len(c.rxChannel) != 0 {
+		return false
+	}
+	if lastSendUnix := c.lastTunnelSendUnix.Load(); lastSendUnix > 0 &&
+		now.Sub(time.Unix(0, lastSendUnix)) < warmPathMinimumIdle {
+		return false
+	}
 	foreground := c.runtimeOriginalSends.Load()
 	chargedThrough := c.warmPathBudgetSends.Load()
 	if foreground >= chargedThrough+warmPathForegroundFramesPerScan {
@@ -279,11 +290,6 @@ func (c *Client) allowWarmPathExploration(now time.Time, interval time.Duration)
 	}
 	lastUnix := c.warmPathLastScanUnix.Load()
 	if lastUnix == 0 || now.Sub(time.Unix(0, lastUnix)) < staleAfter {
-		return false
-	}
-	// The stale-path exception exists only for truly idle capacity. Any queued
-	// user packet wins, even when the queue is below the congestion threshold.
-	if len(c.txChannel) != 0 || len(c.encodedTXChannel) != 0 || len(c.rxChannel) != 0 {
 		return false
 	}
 	c.warmPathBudgetSends.Store(foreground)
@@ -335,7 +341,42 @@ func (c *Client) refreshResolverTransportPath(ctx context.Context, conn *Connect
 		}
 	}
 
-	result, reason := c.probeConnectionMTUOver(ctx, conn, maxUploadPayload, transport)
+	// Abort a background MTU scan as soon as foreground work resumes. The
+	// initial idle gate prevents contention at launch; this guard prevents a
+	// scan already in progress from occupying the newly-needed carrier.
+	probeParent := ctx
+	if probeParent == nil {
+		probeParent = context.Background()
+	}
+	probeCtx, cancelProbe := context.WithCancel(probeParent)
+	baselineSends := c.runtimeOriginalSends.Load()
+	probeFinished := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-probeFinished:
+				return
+			case <-probeCtx.Done():
+				return
+			case <-ticker.C:
+				if c.runtimeOriginalSends.Load() != baselineSends ||
+					len(c.txChannel) != 0 || len(c.encodedTXChannel) != 0 || len(c.rxChannel) != 0 {
+					cancelProbe()
+					return
+				}
+			}
+		}
+	}()
+	result, reason := c.probeConnectionMTUOver(probeCtx, conn, maxUploadPayload, transport)
+	probeCanceled := probeCtx.Err() != nil
+	close(probeFinished)
+	cancelProbe()
+	if probeCanceled {
+		// Preemption is not path failure; retain the last passive/probe score.
+		return
+	}
 	c.noteResolverTransportProbe(conn.Key, transport, result, reason == mtuRejectNone, c.now())
 }
 

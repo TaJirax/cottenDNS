@@ -155,6 +155,82 @@ func TestBackgroundDiscoveryRetainsNarrowTransportMTUs(t *testing.T) {
 	}
 }
 
+func TestBackgroundDiscoveryYieldsToForegroundWithoutPenalizingPath(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	c.cfg.MaxUploadMTU = 250
+	c.connections = []Connection{{
+		Key: "resolver-a", Domain: "tunnel.example", Resolver: "192.0.2.20",
+		ResolverLabel: "192.0.2.20:53", IsValid: true,
+	}}
+	c.connectionsByKey = map[string]int{"resolver-a": 0}
+	now := time.Now()
+	c.noteResolverTransportProbe("resolver-a", transportUDP, mtuConnectionProbeResult{
+		UploadBytes: 180, DownloadBytes: 900, ResolveTime: 50 * time.Millisecond,
+	}, true, now)
+
+	started := make(chan struct{})
+	c.probeConnectionMTUOverFn = func(
+		ctx context.Context,
+		_ *Connection,
+		_ int,
+		_ resolverTransport,
+	) (mtuConnectionProbeResult, mtuRejectReason) {
+		close(started)
+		<-ctx.Done()
+		return mtuConnectionProbeResult{}, mtuRejectUpload
+	}
+	done := make(chan struct{})
+	go func() {
+		c.refreshResolverTransportPath(context.Background(), &c.connections[0])
+		close(done)
+	}()
+	<-started
+	c.runtimeOriginalSends.Add(1)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background discovery did not yield when foreground traffic resumed")
+	}
+
+	c.resolverTransportMu.Lock()
+	score := *pathScoreFor(c.resolverTransportStateLocked("resolver-a"), transportUDP)
+	c.resolverTransportMu.Unlock()
+	if !score.viable || score.uploadMTU != 180 || score.downloadMTU != 900 {
+		t.Fatalf("preempted background scan damaged the existing path score: %+v", score)
+	}
+}
+
+func TestBackgroundDiscoveryAcceptsNilContext(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	c.cfg.MaxUploadMTU = 250
+	c.connections = []Connection{{
+		Key: "resolver-a", Domain: "tunnel.example", Resolver: "192.0.2.20",
+		ResolverLabel: "192.0.2.20:53", IsValid: true,
+	}}
+	c.connectionsByKey = map[string]int{"resolver-a": 0}
+	c.probeConnectionMTUOverFn = func(
+		ctx context.Context,
+		_ *Connection,
+		_ int,
+		_ resolverTransport,
+	) (mtuConnectionProbeResult, mtuRejectReason) {
+		if ctx == nil {
+			t.Fatal("background probe received a nil context")
+		}
+		return mtuConnectionProbeResult{
+			UploadBytes: 100, DownloadBytes: 1000, ResolveTime: 50 * time.Millisecond,
+		}, mtuRejectNone
+	}
+
+	c.refreshResolverTransportPath(nil, &c.connections[0])
+	c.resolverTransportMu.Lock()
+	score := *pathScoreFor(c.resolverTransportStateLocked("resolver-a"), transportUDP)
+	c.resolverTransportMu.Unlock()
+	if !score.probed || !score.viable {
+		t.Fatalf("nil-context background discovery did not retain its result: %+v", score)
+	}
+}
+
 func TestAutoTransportStartupKeepsViableUDPDespiteFasterTCPProbe(t *testing.T) {
 	c := newAutoTransportPolicyClient()
 	now := time.Now()
@@ -257,6 +333,89 @@ func TestAutoTransportKeepsPoisonedFastUDP(t *testing.T) {
 	if got := c.chooseResolverTransport("resolver-a", Enums.PacketPriorityCritical, now.Add(5*time.Second)); !got.hedge {
 		t.Fatal("poison should make the next control packet compare the alternate path")
 	}
+	if got := c.chooseResolverTransport("resolver-a", Enums.PacketPriorityCritical, now.Add(8*time.Second)); got.hedge {
+		t.Fatal("one poison signal caused repeated bandwidth-consuming hedges")
+	}
+}
+
+func TestHealthyAutoTransportDoesNotProbeOnForegroundTraffic(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		got := c.chooseResolverTransport(
+			"resolver-a",
+			Enums.PacketPriorityCritical,
+			now.Add(time.Duration(i)*transportProbeInterval),
+		)
+		if got.hedge {
+			t.Fatalf("healthy control traffic was duplicated at sample %d", i)
+		}
+	}
+}
+
+func TestHealthyAutoTransportUsesBoundedForegroundExploration(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now()
+	c.runtimeOriginalSends.Store(transportForegroundFramesPerExplore)
+	first := c.chooseResolverTransport("resolver-a", Enums.PacketPriorityCritical, now)
+	if !first.hedge {
+		t.Fatal("accrued foreground budget did not compare an alternate transport")
+	}
+	if second := c.chooseResolverTransport(
+		"resolver-a",
+		Enums.PacketPriorityCritical,
+		now.Add(transportProbeInterval+time.Second),
+	); second.hedge {
+		t.Fatal("foreground exploration budget was charged more than once")
+	}
+	if other := c.chooseResolverTransport(
+		"resolver-b",
+		Enums.PacketPriorityCritical,
+		now.Add(transportProbeInterval+time.Second),
+	); other.hedge {
+		t.Fatal("another resolver multiplied the client-wide exploration budget")
+	}
+	if got := c.transportExplorationCount.Load(); got != 1 {
+		t.Fatalf("exploration count=%d, want 1", got)
+	}
+
+	c.runtimeOriginalSends.Add(transportForegroundFramesPerExplore)
+	if next := c.chooseResolverTransport(
+		"resolver-b",
+		Enums.PacketPriorityCritical,
+		now.Add(2*transportProbeInterval+time.Second),
+	); !next.hedge {
+		t.Fatal("next client-wide exploration budget was not usable by another resolver")
+	}
+}
+
+func TestHealthyAutoTransportExplorationStopsWhenQueueBusy(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	c.txChannel = make(chan rawOutboundTask, 8)
+	for i := 0; i < cap(c.txChannel)/4; i++ {
+		c.txChannel <- rawOutboundTask{}
+	}
+	c.runtimeOriginalSends.Store(transportForegroundFramesPerExplore)
+	if got := c.chooseResolverTransport(
+		"resolver-a",
+		Enums.PacketPriorityCritical,
+		time.Now(),
+	); got.hedge {
+		t.Fatal("healthy alternate exploration competed with a busy foreground queue")
+	}
+}
+
+func TestSuccessfulUDPReplyClearsTruncationStreak(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now().Add(-10 * time.Second)
+	c.noteResolverTransportTruncation("resolver-a", transportUDP, now)
+	c.noteResolverTransportTruncation("resolver-a", transportUDP, now.Add(time.Second))
+	c.noteResolverTransportSuccess("resolver-a", transportUDP, 80*time.Millisecond, now.Add(2*time.Second))
+	c.noteResolverTransportTruncation("resolver-a", transportUDP, now.Add(3*time.Second))
+	c.noteResolverTransportTruncation("resolver-a", transportUDP, now.Add(4*time.Second))
+	if got := c.preferredResolverTransport("resolver-a"); got != transportUDP {
+		t.Fatalf("isolated UDP truncation bursts displaced a path with valid replies: got %s", got)
+	}
 }
 
 func TestAutoTransportSwitchesOnlyFailingResolver(t *testing.T) {
@@ -342,6 +501,73 @@ func TestAutoTransportMovesOffSlowUDP(t *testing.T) {
 	}
 	if got := c.chooseResolverTransport("resolver-a", Enums.PacketPriorityNormal, time.Now()).primary; got != transportTCP {
 		t.Fatalf("slow UDP remained preferred despite a consistently faster TCP path: got %s", got)
+	}
+}
+
+func TestAsymmetricControlPathDoesNotDisplaceFasterUDPDataPath(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now().Add(-transportSpeedSwitchCooldown - time.Second)
+	for i := 0; i < transportSpeedSampleThreshold; i++ {
+		at := now.Add(time.Duration(i) * time.Second)
+		c.noteResolverTransportSuccessForPacket(
+			"resolver-a", transportUDP, 80*time.Millisecond, Enums.PACKET_STREAM_DATA, at,
+		)
+		c.noteResolverTransportSuccessForPacket(
+			"resolver-a", transportUDP, 80*time.Millisecond, Enums.PACKET_STREAM_DATA_ACK, at,
+		)
+		c.noteResolverTransportSuccessForPacket(
+			"resolver-a", transportTCP, 140*time.Millisecond, Enums.PACKET_STREAM_DATA, at,
+		)
+		c.noteResolverTransportSuccessForPacket(
+			"resolver-a", transportTCP, 20*time.Millisecond, Enums.PACKET_STREAM_DATA_ACK, at,
+		)
+	}
+	if got := c.preferredResolverTransport("resolver-a"); got != transportUDP {
+		t.Fatalf("fast TCP control replies displaced a faster UDP upload path: got %s", got)
+	}
+}
+
+func TestComparableDirectionalEvidencePromotesFasterTCP(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now().Add(-transportSpeedSwitchCooldown - time.Second)
+	for i := 0; i < transportSpeedSampleThreshold; i++ {
+		at := now.Add(time.Duration(i) * time.Second)
+		for _, packetType := range []uint8{Enums.PACKET_STREAM_DATA, Enums.PACKET_STREAM_DATA_ACK} {
+			c.noteResolverTransportSuccessForPacket(
+				"resolver-a", transportUDP, 180*time.Millisecond, packetType, at,
+			)
+			c.noteResolverTransportSuccessForPacket(
+				"resolver-a", transportTCP, 40*time.Millisecond, packetType, at,
+			)
+		}
+	}
+	if got := c.preferredResolverTransport("resolver-a"); got != transportTCP {
+		t.Fatalf("faster TCP with comparable two-direction evidence was not promoted: got %s", got)
+	}
+}
+
+func TestSpeedPromotionDoesNotFlapImmediatelyAfterFailureFailover(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	now := time.Now()
+	c.noteResolverTransportFailure("resolver-a", transportUDP, now)
+	c.noteResolverTransportFailure("resolver-a", transportUDP, now.Add(transportSwitchCooldown+time.Second))
+	if got := c.preferredResolverTransport("resolver-a"); got != transportTCP {
+		t.Fatalf("failure failover selected %s, want TCP", got)
+	}
+
+	for i := 0; i < transportSpeedSampleThreshold; i++ {
+		at := now.Add(5*time.Second + time.Duration(i)*time.Second)
+		c.noteResolverTransportSuccess("resolver-a", transportTCP, 300*time.Millisecond, at)
+		c.noteResolverTransportSuccess("resolver-a", transportUDP, 50*time.Millisecond, at)
+	}
+	if got := c.preferredResolverTransport("resolver-a"); got != transportTCP {
+		t.Fatalf("speed samples flapped transport during recovery cooldown: got %s", got)
+	}
+
+	at := now.Add(transportSwitchCooldown + transportSpeedSwitchCooldown + time.Second)
+	c.noteResolverTransportSuccess("resolver-a", transportUDP, 50*time.Millisecond, at)
+	if got := c.preferredResolverTransport("resolver-a"); got != transportUDP {
+		t.Fatalf("recovered faster UDP was not restored after stable cooldown: got %s", got)
 	}
 }
 
@@ -449,5 +675,94 @@ func TestJointPathSelectionChoosesTransportByPacketSize(t *testing.T) {
 	large := c.selectJointRuntimePaths(Enums.PACKET_STREAM_DATA, 0, 180, 1, now)
 	if len(large) == 0 || large[0].transport != transportTCP {
 		t.Fatalf("large packet did not move to wide TCP: %+v", large)
+	}
+}
+
+func TestJointDuplicationPrefersDifferentResolverNetworks(t *testing.T) {
+	c := newAutoTransportPolicyClient()
+	c.dupPreferDistinctDomains = true
+	c.connections = []Connection{
+		{
+			Key: "a", Domain: "tunnel.example", Resolver: "192.0.2.10",
+			ResolverLabel: "192.0.2.10:53", IsValid: true,
+			UploadMTUBytes: 200, DownloadMTUBytes: 1200,
+		},
+		{
+			Key: "b", Domain: "tunnel.example", Resolver: "192.0.2.20",
+			ResolverLabel: "192.0.2.20:53", IsValid: true,
+			UploadMTUBytes: 200, DownloadMTUBytes: 1200,
+		},
+		{
+			Key: "c", Domain: "tunnel.example", Resolver: "198.51.100.30",
+			ResolverLabel: "198.51.100.30:53", IsValid: true,
+			UploadMTUBytes: 200, DownloadMTUBytes: 1200,
+		},
+	}
+	c.connectionsByKey = map[string]int{"a": 0, "b": 1, "c": 2}
+	c.balancer = NewBalancer(BalancingRoundRobinDefault)
+	c.balancer.SetConnections([]*Connection{
+		&c.connections[0], &c.connections[1], &c.connections[2],
+	})
+
+	now := time.Now()
+	for i := range c.connections {
+		c.noteResolverTransportProbe(c.connections[i].Key, transportUDP, mtuConnectionProbeResult{
+			UploadBytes: 200, DownloadBytes: 1200, ResolveTime: 50 * time.Millisecond,
+		}, true, now)
+	}
+
+	selected := c.selectJointRuntimePaths(Enums.PACKET_STREAM_DATA, 0, 100, 2, now)
+	if len(selected) != 2 {
+		t.Fatalf("selected=%d, want 2", len(selected))
+	}
+	first := resolverNetworkGroup(selected[0].connection)
+	second := resolverNetworkGroup(selected[1].connection)
+	if first == second {
+		t.Fatalf("duplication stayed in one resolver network: %+v", selected)
+	}
+}
+
+func TestRuntimeDeliveryEvidencePenalizesIntermittentLoss(t *testing.T) {
+	score := &resolverPathScore{
+		probed:        true,
+		viable:        true,
+		uploadMTU:     200,
+		downloadMTU:   1200,
+		uploadRTTEWMA: 100 * time.Millisecond,
+		rttEWMA:       100 * time.Millisecond,
+	}
+	for i := 0; i < transportSpeedSampleThreshold; i++ {
+		noteRuntimeDelivery(score, true)
+	}
+	clean := pathEstimatedGoodputForPacket(score, Enums.PACKET_STREAM_DATA)
+	for i := 0; i < 4; i++ {
+		noteRuntimeDelivery(score, false)
+		noteRuntimeDelivery(score, true)
+	}
+	lossy := pathEstimatedGoodputForPacket(score, Enums.PACKET_STREAM_DATA)
+	if lossy >= clean*0.85 {
+		t.Fatalf("intermittent foreground loss was underweighted: clean=%v lossy=%v", clean, lossy)
+	}
+	for i := 0; i < 24; i++ {
+		noteRuntimeDelivery(score, true)
+	}
+	recovered := pathEstimatedGoodputForPacket(score, Enums.PACKET_STREAM_DATA)
+	if recovered <= lossy || recovered < clean*0.95 {
+		t.Fatalf("clean recovery stayed penalized: clean=%v lossy=%v recovered=%v", clean, lossy, recovered)
+	}
+}
+
+func TestRuntimeDeliveryPriorDoesNotOverreactToFirstTimeout(t *testing.T) {
+	score := &resolverPathScore{
+		probed:        true,
+		viable:        true,
+		uploadMTU:     200,
+		uploadRTTEWMA: 100 * time.Millisecond,
+	}
+	noteRuntimeDelivery(score, false)
+	noteRuntimeDelivery(score, true)
+	noteRuntimeDelivery(score, true)
+	if score.runtimeDelivery < 0.85 {
+		t.Fatalf("one startup timeout collapsed delivery score to %.3f", score.runtimeDelivery)
 	}
 }

@@ -206,7 +206,7 @@ func (m *tcpDataManager) sendJob(job tcpDataJob) {
 	if err != nil || dc == nil {
 		m.client.streamDialFailures.Add(1)
 		m.client.recordResolverHealthEvent(job.frame.serverKey, false, job.now)
-		m.client.noteResolverTransportFailure(job.frame.serverKey, m.kind, job.now)
+		m.client.noteResolverTransportFailureForPacket(job.frame.serverKey, m.kind, job.frame.packetType, job.now)
 		m.client.replayRuntimeFrame(job.frame, m.kind, nil, "", failureReplayMaxDepth)
 		return
 	}
@@ -219,7 +219,7 @@ func (m *tcpDataManager) sendJob(job tcpDataJob) {
 	if werr != nil {
 		m.client.streamWriteFailures.Add(1)
 		m.client.recordResolverHealthEvent(job.frame.serverKey, false, job.now)
-		m.client.noteResolverTransportFailure(job.frame.serverKey, m.kind, job.now)
+		m.client.noteResolverTransportFailureForPacket(job.frame.serverKey, m.kind, job.frame.packetType, job.now)
 		dc.close()
 		m.remove(dc)
 		m.client.replayRuntimeFrame(job.frame, m.kind, nil, "", failureReplayMaxDepth)

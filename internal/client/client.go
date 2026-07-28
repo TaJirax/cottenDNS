@@ -187,12 +187,20 @@ type Client struct {
 	// bounded MTU refresh is allowed per 4096 original frames (roughly a 1-2%
 	// probe budget even for a conservative 64-query scan), or when the tunnel
 	// has been idle long enough that alternate transport state would go stale.
-	runtimeOriginalSends  atomic.Uint64
-	warmPathBudgetSends   atomic.Uint64
-	warmPathLastScanUnix  atomic.Int64
-	lastFECReceived       atomic.Int64
-	runtimeReadBufferSize int
-	lastRXDropLogUnix     atomic.Int64
+	runtimeOriginalSends atomic.Uint64
+	warmPathBudgetSends  atomic.Uint64
+	warmPathLastScanUnix atomic.Int64
+	// Transport exploration is globally budgeted across the whole resolver
+	// fleet. Counters are local observability only and add no network traffic.
+	transportExploreBudgetSends atomic.Uint64
+	transportExplorationCount   atomic.Uint64
+	transportSwitchCount        atomic.Uint64
+	pathStripeCursor            atomic.Uint64
+	pathStripeCount             atomic.Uint64
+	pathRedundancySuppressed    atomic.Uint64
+	lastFECReceived             atomic.Int64
+	runtimeReadBufferSize       int
+	lastRXDropLogUnix           atomic.Int64
 	// injectedNXDOMAINCount counts forged NXDOMAIN responses ignored as on-path
 	// DNS poisoning (see RESOLVER_IGNORE_INJECTED_NXDOMAIN). Purely observational.
 	injectedNXDOMAINCount atomic.Uint64
@@ -333,6 +341,9 @@ type Connection struct {
 	// when loss-aware probing is enabled (MTU_PROBE_SAMPLES > 1); 0 otherwise.
 	UploadMTULoss   float64
 	DownloadMTULoss float64
+	// networkGroup is precomputed when the resolver map is built so duplicate
+	// placement does not parse IP addresses on the foreground send path.
+	networkGroup string
 	// Backup marks a resolver that passed probing but cannot sustain the chosen
 	// session operating MTU. It is kept as a reserve (failover) rather than used
 	// in the active pool: the balancer only selects it when no primary resolver

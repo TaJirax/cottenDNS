@@ -47,7 +47,10 @@ func (c *Client) runtimePacketDuplicationCount(packetType uint8) int {
 	if c == nil {
 		return 1
 	}
+	return c.runtimePathControlDecision(packetType).copies
+}
 
+func (c *Client) configuredPacketDuplicationCount(packetType uint8) int {
 	uploadData, downloadData, uploadSetup, downloadSetup := c.directionalDuplicationCounts()
 
 	var count int
@@ -78,16 +81,6 @@ func (c *Client) runtimePacketDuplicationCount(packetType uint8) int {
 	if count < 1 {
 		count = 1
 	}
-	if c.cfg.AdaptiveDuplication {
-		count = c.adaptiveDuplicationCount(count)
-	}
-	// Recent FEC shards mean the server is already spending redundancy on the
-	// download leg. Keep ACK/NACK polling diverse, but do not multiply both FEC
-	// and DNS copies at full strength at the same time.
-	if (packetType == Enums.PACKET_STREAM_DATA_ACK || packetType == Enums.PACKET_STREAM_DATA_NACK) &&
-		c.fecRecentlyActive() && count > 2 {
-		count = 2
-	}
 	return count
 }
 
@@ -106,20 +99,31 @@ func (c *Client) fecRecentlyActive() bool {
 // [base, adaptiveDuplicationCeiling]; loss high enough to demand more than the
 // ceiling is the regime where Reed-Solomon FEC (tier 2) takes over.
 func (c *Client) adaptiveDuplicationCount(base int) int {
-	if c == nil || c.balancer == nil {
+	if c == nil {
 		return base
 	}
 	// Use the larger of the DNS-reachability loss and the real tunnel loss
 	// (upload retransmit rate); the latter actually reflects data loss, which the
 	// DNS sent/acked ratio (≈0 on reachable resolvers) does not.
-	lossPM := c.balancer.AggregateLossPerMille()
-	if tunnelPM := c.tunnelLossPerMille(); tunnelPM > lossPM {
-		lossPM = tunnelPM
-	}
+	lossPM := c.runtimeLossPerMille()
 	if lossPM == 0 {
 		return base
 	}
 	return duplicationForLoss(base, float64(lossPM)/1000.0, c.cfg.AdaptiveDuplicationTargetDelivery)
+}
+
+func (c *Client) runtimeLossPerMille() uint64 {
+	if c == nil {
+		return 0
+	}
+	lossPM := uint64(0)
+	if c.balancer != nil {
+		lossPM = c.balancer.AggregateLossPerMille()
+	}
+	if tunnelPM := c.tunnelLossPerMille(); tunnelPM > lossPM {
+		lossPM = tunnelPM
+	}
+	return lossPM
 }
 
 // duplicationForLoss returns the copy count needed to reach target delivery

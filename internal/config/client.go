@@ -73,6 +73,14 @@ type ClientConfig struct {
 	// fatal — the client falls back to UDP and then TCP/53 on its own, so a
 	// blocked TLS port degrades to the survival path instead of no tunnel.
 	ResolverTransport string `toml:"RESOLVER_TRANSPORT"`
+	// PathControllerMode selects the client-only runtime coordinator:
+	// "unified" shares directional path evidence and one redundancy budget
+	// across duplication/FEC/exploration; "legacy" restores the previous
+	// independent decisions without changing the wire protocol.
+	PathControllerMode string `toml:"PATH_CONTROLLER_MODE"`
+	// ComparablePathStriping lets unified mode distribute successive bulk
+	// packets across mature, near-equal resolver paths while sending one copy.
+	ComparablePathStriping bool `toml:"COMPARABLE_PATH_STRIPING"`
 	// ResolverTransportPaths optionally pins individual resolvers to a transport
 	// policy. Keys may be a resolver IP, resolver label (IP:port), or connection
 	// key; values are auto|udp|tcp|dot|doh. "auto" compares UDP and TCP for that
@@ -333,6 +341,8 @@ func defaultClientConfig() ClientConfig {
 		QNameLabelLength:          63,
 		ResolverRateLimitEnabled:  true,
 		ResolverTransport:         "auto",
+		PathControllerMode:        "unified",
+		ComparablePathStriping:    true,
 		ResolverTransportPaths:    map[string]string{},
 		ResolverTransportBackgroundScanIntervalSec: 30.0,
 		ResolverDoTPort:                       853,
@@ -551,8 +561,8 @@ func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverri
 
 func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.ConfigPreset = normalizeConfigPresetName(cfg.ConfigPreset)
-	if !isKnownConfigPreset(cfg.ConfigPreset) {
-		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: default, speed, survival, tcp-survival)", cfg.ConfigPreset)
+	if !isKnownClientConfigPreset(cfg.ConfigPreset) {
+		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: %s)", cfg.ConfigPreset, clientConfigPresetNames)
 	}
 
 	cfg.ProtocolType = strings.ToUpper(strings.TrimSpace(cfg.ProtocolType))
@@ -671,6 +681,14 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		cfg.ResolverTransport = "doh"
 	default:
 		return cfg, fmt.Errorf("invalid RESOLVER_TRANSPORT: %q (want auto|udp|tcp|dot|doh)", cfg.ResolverTransport)
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.PathControllerMode)) {
+	case "", "unified":
+		cfg.PathControllerMode = "unified"
+	case "legacy":
+		cfg.PathControllerMode = "legacy"
+	default:
+		return cfg, fmt.Errorf("invalid PATH_CONTROLLER_MODE: %q (want unified|legacy)", cfg.PathControllerMode)
 	}
 	if cfg.ResolverTransportPaths == nil {
 		cfg.ResolverTransportPaths = map[string]string{}

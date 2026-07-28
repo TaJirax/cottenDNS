@@ -158,7 +158,7 @@ func TestQuestionFingerprintAcceptsDNSCaseNormalization(t *testing.T) {
 	}
 }
 
-func TestUDPTruncationImmediatelyPrefersTCP(t *testing.T) {
+func TestUDPTruncationRequiresRepeatedEvidenceBeforePreferringTCP(t *testing.T) {
 	c := newAutoTransportPolicyClient()
 	c.resolverPending = make(map[resolverSampleKey]resolverSample)
 	addr := &net.UDPAddr{IP: net.ParseIP("192.0.2.75"), Port: 53}
@@ -167,15 +167,20 @@ func TestUDPTruncationImmediatelyPrefersTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	c.trackResolverSendOver(query, addr.String(), "udp-local", "resolver-a", transportUDP, now)
-
 	truncated := append([]byte(nil), query...)
 	truncated[2] |= 0x80 // QR
 	truncated[2] |= 0x02 // TC
-	c.handleInboundPacketOver(truncated, addr, "udp-local", transportUDP)
 
-	if got := c.preferredResolverTransport("resolver-a"); got != transportTCP {
-		t.Fatalf("UDP TC response did not immediately prefer TCP: got %s", got)
+	for attempt := 1; attempt <= transportTruncationThreshold; attempt++ {
+		c.trackResolverSendOver(query, addr.String(), "udp-local", "resolver-a", transportUDP, now.Add(time.Duration(attempt)*time.Second))
+		c.handleInboundPacketOver(truncated, addr, "udp-local", transportUDP)
+		got := c.preferredResolverTransport("resolver-a")
+		if attempt < transportTruncationThreshold && got != transportUDP {
+			t.Fatalf("one-off UDP truncation prematurely preferred %s on attempt %d", got, attempt)
+		}
+		if attempt == transportTruncationThreshold && got != transportTCP {
+			t.Fatalf("repeated UDP truncation did not prefer TCP: got %s", got)
+		}
 	}
 }
 

@@ -1,0 +1,6 @@
+# CottenDNS adaptive starting profile for bandwidth-constrained networks.
+# Aliases accepted by CONFIG_PRESET: "africa" and "africa-low-bandwidth".
+
+CONFIG_PRESET = "low-bandwidth"
+DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+ENCRYPTION_KEY = ""

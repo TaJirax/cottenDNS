@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-00a36c?style=for-the-badge"></a>
   <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00add8?style=for-the-badge&logo=go&logoColor=white">
   <img alt="Transport" src="https://img.shields.io/badge/transport-DNS%20over%20UDP%2F53-4f46e5?style=for-the-badge">
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Termux-f59e0b?style=for-the-badge">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-f59e0b?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -34,7 +34,9 @@ CottenDns یک سیستم تونل client/server است که ترافیک TCP ر
 
 کارهای اخیر روی کارکرد پایدار روی شبکه‌های بسیار محدودکننده و پر-loss متمرکز بوده است:
 
-- **fallback به DNS-over-TCP/53.** سرور هم‌زمان روی UDP/53 و TCP/53 (همان پورت) سرویس می‌دهد و کلاینت (`RESOLVER_TRANSPORT = auto`) ابتدا روی UDP پروب می‌کند و اگر هیچ resolverای پیدا نشد، کل لیست را روی **TCP/53** دوباره پروب می‌کند — برای شبکه‌هایی که UDP/53 را فیلتر یا truncate می‌کنند. وقتی UDP کار می‌کند هیچ هزینه‌ای ندارد. همهٔ کانال‌های پاسخ (TXT/CNAME/A/NULL/HTTPS) روی TCP هم کار می‌کنند.
+- **انتخاب transport به‌صورت per-resolver.** سرور هم‌زمان روی UDP/53 و TCP/53 (همان پورت) سرویس می‌دهد. با `RESOLVER_TRANSPORT = auto` هر resolver مستقل ارزیابی می‌شود؛ UDP سالم سریع باقی می‌ماند و فقط resolverای که UDP آن واقعاً خراب یا کند است به TCP/53 می‌رود. همهٔ کانال‌های پاسخ (TXT/CNAME/A/NULL/HTTPS) روی هر دو مسیر کار می‌کنند.
+- **کنترل‌گر یکپارچهٔ مسیر.** حالت پیش‌فرض `PATH_CONTROLLER_MODE = "unified"` شواهد upload/download را جدا نگه می‌دارد و duplication، FEC، probe، replay و فشار صف را با یک بودجهٔ مشترک هماهنگ می‌کند. `COMPARABLE_PATH_STRIPING = true` بسته‌های متوالی را فقط میان مسیرهای سریع و کاملاً اندازه‌گیری‌شده پخش می‌کند، بدون ارسال کپی اضافه. برای rollback فوری و بدون تغییر سرور می‌توان `PATH_CONTROLLER_MODE = "legacy"` را انتخاب کرد.
+- **رمزنگاری پویای امن‌تر در سرور.** با `ENCRYPTION_AUTO_DETECT = true` همهٔ روش‌های AES-GCM پیش از روش‌های legacy بررسی می‌شوند و XOR/ChaCha20 باید با وضعیت session یا ساختار دقیق MTU سازگار باشند. بنابراین هر کلاینت می‌تواند روش رمزنگاری خودش را روی UDP، TCP/53، DoT یا DoH انتخاب کند؛ روش بدون رمز `0` فقط وقتی فعال می‌شود که سرور صریحاً برای plaintext تنظیم شده باشد.
 - **محدودسازی نرخ هوشمند.** resolverای که سیگنال overload می‌دهد (REFUSED/SERVFAIL یا timeout) به‌صورت AIMD کوتاه‌مدت خنک می‌شود و بارش به resolverهای دارای ظرفیت منتقل می‌شود — توزیع مجدد، نه throttle سراسری. خودگِیت است (به resolverهای سالم کاری ندارد)، هرگز بی‌کار نمی‌ماند و از بلاک شدن IP/نرخ جلوگیری می‌کند.
 - **بازشکل‌دهی QNAME.** `QNAME_LABEL_LENGTH` داده را در labelهای کوتاه‌تر و jitter-شده می‌چیند به‌جای یک زنجیرهٔ یکنواخت ۶۳ کاراکتری — یک اهرم کاهش fingerprint. برای سرور شفاف است (سرور labelها را بدون توجه به نحوهٔ تقسیم بازسازی می‌کند) پس desync نمی‌شود؛ پیش‌فرض ظرفیت بیشینه را حفظ می‌کند.
 - **MTU تطبیقی گروهی.** به‌جای تحمیل MTU کندترین resolver به همه، کلاینت هر resolver را اندازه می‌گیرد و session را روی نقطهٔ بهینهٔ throughput اجرا می‌کند (بیشینهٔ `MTU × تعداد resolverهایی که آن را تحمل می‌کنند`، به‌صورت مشترک روی upload و download). resolverهای کندتر حذف نمی‌شوند بلکه به‌عنوان **ذخیره (reserve)** نگه داشته می‌شوند و در صورت افت pool فعال به‌طور خودکار (با hysteresis برای جلوگیری از نوسان) ارتقا می‌یابند.
@@ -579,7 +581,6 @@ sequenceDiagram
 | --- | --- |
 | 🖥️ LAN proxy | کلاینت را روی کامپیوتر اجرا کنید و گوشی‌ها از SOCKS5 آن روی LAN استفاده کنند |
 | 📦 Router/VPS client | کلاینت را روی router، mini PC یا VPS اجرا کنید و دستگاه‌ها را به آن وصل کنید |
-| 📱 Termux | در صورت پشتیبانی release matrix از artifactهای Termux استفاده کنید |
 | 🔗 Chaining | یک proxy/panel محلی دیگر را به SOCKS5 listener CottenDns chain کنید |
 
 اگر دستگاه دیگری باید روی LAN به کلاینت وصل شود:
@@ -610,7 +611,7 @@ CottenDns_Server_<Platform>_<ARCH>.zip
 CottenDns_Server_<Platform>_<ARCH>.tar.gz
 ```
 
-release matrix گیت‌هاب شامل targetهای Windows، Linux، Linux-Legacy، macOS و Termux/Android است. packageهای کلاینت executable، `client_config.toml` و `client_resolvers.txt` دارند. packageهای Linux کلاینت `client_linux_install.sh` را هم دارند. packageهای سرور executable و `server_config.toml` دارند.
+release matrix گیت‌هاب شامل targetهای Windows، Linux، Linux-Legacy و macOS است. packageهای کلاینت executable، `client_config.toml` و `client_resolvers.txt` دارند. packageهای Linux کلاینت `client_linux_install.sh` را هم دارند. packageهای سرور executable و `server_config.toml` دارند.
 
 <a id="development"></a>
 

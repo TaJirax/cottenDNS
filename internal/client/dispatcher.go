@@ -220,12 +220,12 @@ dispatchLoop:
 			opts.TotalFragments = item.TotalFragments
 		}
 
-		targetCount := c.runtimePacketDuplicationCount(finalPacketType)
-		paths := c.selectJointRuntimePaths(
+		pathControl := c.runtimePathControlDecision(finalPacketType)
+		paths := c.selectJointRuntimePathsControlled(
 			finalPacketType,
 			selectedStreamID,
 			len(finalPayload),
-			targetCount,
+			pathControl,
 			c.now(),
 		)
 		if len(paths) == 0 {

@@ -416,6 +416,12 @@ func TestHandleInboundPacketTreatsServerFailureWithoutTXTAsResolverFailure(t *te
 	if len(state.Events) != 1 {
 		t.Fatalf("expected one failure health event after SERVFAIL response, got=%d", len(state.Events))
 	}
+	c.resolverTransportMu.Lock()
+	transportFailures := pathScoreFor(c.resolverTransportStateLocked("a"), transportUDP).failureStreak
+	c.resolverTransportMu.Unlock()
+	if transportFailures != 0 {
+		t.Fatalf("SERVFAIL incorrectly penalized UDP transport: failure streak=%d", transportFailures)
+	}
 }
 
 func TestStreamManagerLookupAndShutdownAreConcurrentSafe(t *testing.T) {

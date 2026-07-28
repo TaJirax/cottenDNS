@@ -44,6 +44,20 @@ func TestWarmPathExplorationStopsDuringCongestion(t *testing.T) {
 	}
 }
 
+func TestWarmPathExplorationWaitsForForegroundIdleGap(t *testing.T) {
+	now := time.Now()
+	c := newWarmPathBudgetClient(now)
+	c.runtimeOriginalSends.Store(warmPathForegroundFramesPerScan)
+	c.lastTunnelSendUnix.Store(now.Add(time.Minute - warmPathMinimumIdle/2).UnixNano())
+	if c.allowWarmPathExploration(now.Add(time.Minute), 30*time.Second) {
+		t.Fatal("warm-path scan started while foreground traffic was still active")
+	}
+	c.lastTunnelSendUnix.Store(now.Add(time.Minute - 2*warmPathMinimumIdle).UnixNano())
+	if !c.allowWarmPathExploration(now.Add(time.Minute), 30*time.Second) {
+		t.Fatal("warm-path scan did not use an accrued budget after a true idle gap")
+	}
+}
+
 func TestWarmPathExplorationRefreshesStaleIdlePaths(t *testing.T) {
 	now := time.Now()
 	c := newWarmPathBudgetClient(now)

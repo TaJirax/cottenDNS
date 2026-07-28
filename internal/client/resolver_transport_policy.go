@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 	"net"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,29 +12,49 @@ import (
 )
 
 const (
-	transportFailureSwitchThreshold = 2
-	transportSpeedSampleThreshold   = 3
-	transportSpeedSwitchRatio       = 1.20
-	transportProbeInterval          = 2 * time.Second
-	transportSwitchCooldown         = 3 * time.Second
-	transportPoisonMemory           = 2 * time.Minute
+	transportFailureSwitchThreshold     = 2
+	transportSpeedSampleThreshold       = 3
+	transportSpeedSwitchRatio           = 1.20
+	transportProbeInterval              = 2 * time.Second
+	transportSwitchCooldown             = 3 * time.Second
+	transportSpeedSwitchCooldown        = 10 * time.Second
+	transportPoisonMemory               = 2 * time.Minute
+	transportTruncationThreshold        = 3
+	transportForegroundFramesPerExplore = uint64(1024)
 )
 
 type resolverPathScore struct {
-	rttEWMA       time.Duration
-	successes     uint32
-	failures      uint32
-	failureStreak uint8
-	poisonEvents  uint32
-	lastPoison    time.Time
-	probed        bool
-	viable        bool
-	uploadMTU     int
-	downloadMTU   int
-	uploadLoss    float64
-	downloadLoss  float64
-	lastSuccess   time.Time
-	lastFailure   time.Time
+	rttEWMA                 time.Duration
+	rttVariation            time.Duration
+	uploadRTTEWMA           time.Duration
+	downloadRTTEWMA         time.Duration
+	successes               uint32
+	uploadSuccesses         uint32
+	downloadSuccesses       uint32
+	failures                uint32
+	failureStreak           uint8
+	uploadFailureStreak     uint8
+	downloadFailureStreak   uint8
+	truncations             uint32
+	truncationStreak        uint8
+	poisonEvents            uint32
+	lastPoison              time.Time
+	lastTruncation          time.Time
+	probed                  bool
+	viable                  bool
+	uploadMTU               int
+	downloadMTU             int
+	uploadLoss              float64
+	downloadLoss            float64
+	runtimeDelivery         float64
+	runtimeSamples          uint32
+	uploadRuntimeDelivery   float64
+	downloadRuntimeDelivery float64
+	uploadRuntimeSamples    uint32
+	downloadRuntimeSamples  uint32
+	directionalEvidence     bool
+	lastSuccess             time.Time
+	lastFailure             time.Time
 }
 
 type resolverTransportState struct {
@@ -54,10 +74,12 @@ type resolverTransportDecision struct {
 }
 
 type resolverRuntimePath struct {
-	connection Connection
-	transport  resolverTransport
-	score      float64
-	hedge      bool
+	connection         Connection
+	transport          resolverTransport
+	score              float64
+	directionalSamples uint32
+	directionalRTT     time.Duration
+	hedge              bool
 }
 
 func validResolverTransport(transport resolverTransport) bool {
@@ -124,6 +146,10 @@ func (c *Client) resolverTransportStateLocked(serverKey string) *resolverTranspo
 			preferred = candidates[0]
 		}
 		state = &resolverTransportState{preferred: preferred}
+		directional := c.cfg.PathControllerMode != "legacy"
+		for i := range state.paths {
+			state.paths[i].directionalEvidence = directional
+		}
 		c.resolverTransports[serverKey] = state
 	}
 	return state
@@ -196,6 +222,9 @@ func pathEstimatedGoodput(score *resolverPathScore) float64 {
 		mtu = 1
 	}
 	delivery := 1 - score.downloadLoss
+	if score.runtimeSamples >= transportSpeedSampleThreshold {
+		delivery = score.runtimeDelivery
+	}
 	if delivery < 0.01 {
 		delivery = 0.01
 	}
@@ -210,27 +239,181 @@ func pathEstimatedGoodputForPacket(score *resolverPathScore, packetType uint8) f
 	if score == nil || !score.probed || !score.viable {
 		return 0
 	}
-	mtu, loss := score.uploadMTU, score.uploadLoss
-	switch packetType {
-	case Enums.PACKET_STREAM_DATA_ACK, Enums.PACKET_STREAM_DATA_NACK, Enums.PACKET_PING:
+	mtu, loss, rtt := score.uploadMTU, score.uploadLoss, score.uploadRTTEWMA
+	if packetUsesDownloadPath(packetType) {
 		mtu, loss = score.downloadMTU, score.downloadLoss
+		rtt = score.downloadRTTEWMA
 	}
 	if mtu <= 0 {
 		mtu = 1
 	}
 	delivery := 1 - loss
+	directionalDelivery, directionalSamples := score.runtimeDelivery, score.runtimeSamples
+	if score.directionalEvidence {
+		directionalDelivery, directionalSamples = score.uploadRuntimeDelivery, score.uploadRuntimeSamples
+		if packetUsesDownloadPath(packetType) {
+			directionalDelivery, directionalSamples = score.downloadRuntimeDelivery, score.downloadRuntimeSamples
+		}
+	}
+	if directionalSamples >= transportSpeedSampleThreshold {
+		delivery = score.runtimeDelivery
+		if score.directionalEvidence {
+			delivery = directionalDelivery
+		}
+	} else if score.runtimeSamples >= transportSpeedSampleThreshold {
+		delivery = score.runtimeDelivery
+	}
 	if delivery < 0.01 {
 		delivery = 0.01
 	}
-	rttMillis := float64(score.rttEWMA) / float64(time.Millisecond)
+	if rtt <= 0 {
+		rtt = score.rttEWMA
+	}
+	rttMillis := float64(rtt) / float64(time.Millisecond)
 	if rttMillis < 1 {
 		rttMillis = 1
 	}
 	value := float64(mtu) * delivery / rttMillis
-	if score.failureStreak > 0 {
-		value /= 1 + float64(score.failureStreak*2)
+	// Until a path has three authenticated foreground samples in this
+	// direction, retain it as usable but keep one lucky response from outranking
+	// a mature path. The penalty disappears smoothly as evidence arrives.
+	if directionalSamples < transportSpeedSampleThreshold {
+		value *= 0.85 + 0.05*float64(directionalSamples)
+	}
+	directionalFailureStreak := score.failureStreak
+	if score.directionalEvidence {
+		directionalFailureStreak = score.uploadFailureStreak
+		if packetUsesDownloadPath(packetType) {
+			directionalFailureStreak = score.downloadFailureStreak
+		}
+	}
+	if directionalFailureStreak > 0 {
+		value /= 1 + float64(directionalFailureStreak*2)
 	}
 	return value
+}
+
+func packetUsesDownloadPath(packetType uint8) bool {
+	switch packetType {
+	case Enums.PACKET_STREAM_DATA_ACK, Enums.PACKET_STREAM_DATA_NACK, Enums.PACKET_PING:
+		return true
+	default:
+		return false
+	}
+}
+
+func updateDirectionalRTT(current *time.Duration, sample time.Duration) {
+	if current == nil {
+		return
+	}
+	if sample < 0 {
+		sample = 0
+	}
+	if *current == 0 {
+		*current = sample
+		return
+	}
+	*current = (*current*7 + sample) / 8
+}
+
+func noteRuntimeDelivery(score *resolverPathScore, delivered bool) {
+	if score == nil {
+		return
+	}
+	sample := 0.0
+	if delivered {
+		sample = 1
+	}
+	if score.runtimeSamples == 0 {
+		// Begin from a healthy neutral prior. Starting at zero after the first
+		// timeout would punish a newly-recovered path for many packets and could
+		// turn one startup loss into an unnecessary transport switch.
+		score.runtimeDelivery = 1
+	}
+	// An eighth-weight EWMA reacts within a few packets to sustained loss but
+	// retains enough history that one delayed DNS response cannot steer the
+	// resolver pool. It is learned from foreground traffic, not probes.
+	score.runtimeDelivery = score.runtimeDelivery*0.875 + sample*0.125
+	if score.runtimeSamples < ^uint32(0) {
+		score.runtimeSamples++
+	}
+}
+
+func noteDirectionalRuntimeDelivery(delivery *float64, samples *uint32, delivered bool) {
+	if delivery == nil || samples == nil {
+		return
+	}
+	sample := 0.0
+	if delivered {
+		sample = 1
+	}
+	if *samples == 0 {
+		*delivery = 1
+	}
+	*delivery = *delivery*0.875 + sample*0.125
+	if *samples < ^uint32(0) {
+		(*samples)++
+	}
+}
+
+func noteRuntimeDeliveryForPacket(score *resolverPathScore, delivered bool, packetType uint8, bidirectional bool) {
+	noteRuntimeDelivery(score, delivered)
+	if score == nil {
+		return
+	}
+	if bidirectional || !packetUsesDownloadPath(packetType) {
+		noteDirectionalRuntimeDelivery(&score.uploadRuntimeDelivery, &score.uploadRuntimeSamples, delivered)
+	}
+	if bidirectional || packetUsesDownloadPath(packetType) {
+		noteDirectionalRuntimeDelivery(&score.downloadRuntimeDelivery, &score.downloadRuntimeSamples, delivered)
+	}
+}
+
+// pathNeedsHedgeLocked reports whether fresh passive evidence warrants one
+// alternate-path race. Healthy traffic does not probe merely because a timer
+// elapsed: that spent scarce DNS capacity and could reduce foreground speed.
+func pathNeedsHedgeLocked(state *resolverTransportState, transport resolverTransport, now time.Time) bool {
+	if state == nil {
+		return false
+	}
+	score := pathScoreFor(state, transport)
+	if score == nil {
+		return false
+	}
+	freshAfterLastProbe := func(observed time.Time) bool {
+		return !observed.IsZero() && (state.lastProbe.IsZero() || observed.After(state.lastProbe))
+	}
+	if score.failureStreak > 0 && freshAfterLastProbe(score.lastFailure) {
+		return true
+	}
+	if score.truncationStreak > 0 && freshAfterLastProbe(score.lastTruncation) {
+		return true
+	}
+	if freshAfterLastProbe(score.lastPoison) {
+		age := now.Sub(score.lastPoison)
+		return age >= 0 && age <= transportPoisonMemory
+	}
+	return false
+}
+
+// healthyExplorationAvailableLocked permits a tiny amount of real-path
+// comparison without a timer-driven health tax. One existing control packet
+// may be duplicated after 1,024 original frames (about 0.1%), and only while
+// foreground queues have headroom. This is enough to discover a materially
+// faster TCP/DoT/DoH path without competing with congested user traffic.
+func (c *Client) healthyExplorationAvailableLocked(state *resolverTransportState) bool {
+	if c == nil || state == nil {
+		return false
+	}
+	foreground := c.runtimeOriginalSends.Load()
+	chargedThrough := c.transportExploreBudgetSends.Load()
+	if foreground < chargedThrough+transportForegroundFramesPerExplore {
+		return false
+	}
+	if c.runtimeQueuesCongested() {
+		return false
+	}
+	return true
 }
 
 func fallbackConnectionPathScore(conn Connection, packetType uint8) float64 {
@@ -251,6 +434,39 @@ func fallbackConnectionPathScore(conn Connection, packetType uint8) float64 {
 		rttMillis = 1
 	}
 	return float64(mtu) * delivery / rttMillis
+}
+
+// resolverNetworkGroup is a cheap failure-domain approximation used only for
+// duplicate placement. A /24 for IPv4 and /48 for IPv6 keeps copies away from
+// the same nearby resolver network when alternatives exist. It deliberately
+// falls back to the resolver key: routing never rejects a path merely because
+// an address cannot be parsed.
+func resolverNetworkGroup(conn Connection) string {
+	if conn.networkGroup != "" {
+		return conn.networkGroup
+	}
+	host := strings.TrimSpace(conn.Resolver)
+	if host == "" {
+		host = strings.TrimSpace(conn.ResolverLabel)
+		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+			host = parsedHost
+		}
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return "key:" + conn.Key
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return fmt.Sprintf("v4:%d.%d.%d", v4[0], v4[1], v4[2])
+	}
+	ip = ip.To16()
+	if ip == nil {
+		return "key:" + conn.Key
+	}
+	return fmt.Sprintf(
+		"v6:%02x%02x:%02x%02x:%02x%02x",
+		ip[0], ip[1], ip[2], ip[3], ip[4], ip[5],
+	)
 }
 
 // bestPacketTransportLocked selects a resolver's best transport for the actual
@@ -321,21 +537,43 @@ func (c *Client) selectJointRuntimePaths(
 	count int,
 	now time.Time,
 ) []resolverRuntimePath {
+	control := c.runtimePathControlDecision(packetType)
+	control.copies = max(1, count)
+	if control.copies > 1 {
+		control.allowHealthyExplore = false
+		control.allowComparableStrip = false
+	}
+	return c.selectJointRuntimePathsControlled(packetType, streamID, payloadSize, control, now)
+}
+
+func (c *Client) selectJointRuntimePathsControlled(
+	packetType uint8,
+	streamID uint16,
+	payloadSize int,
+	control runtimePathControl,
+	now time.Time,
+) []resolverRuntimePath {
 	if c == nil || c.balancer == nil {
 		return nil
 	}
+	count := control.copies
 	if count < 1 {
 		count = 1
 	}
 
 	connections := c.balancer.AllValidConnectionsIncludingBackup()
-	eligibleConnections := make([]Connection, 0, len(connections))
+	// AllValidConnectionsIncludingBackup returns a private slice, so compact it
+	// in place before taking resolverTransportMu. Runtime-disable inspection uses
+	// resolverHealthMu; keeping the two locks unnested prevents future lock-order
+	// inversions without restoring the old temporary-slice allocation.
+	eligible := connections[:0]
 	for _, conn := range connections {
 		if conn.IsValid && conn.Key != "" && !c.isRuntimeDisabledResolver(conn.Key) {
-			eligibleConnections = append(eligibleConnections, conn)
+			eligible = append(eligible, conn)
 		}
 	}
-	paths := make([]resolverRuntimePath, 0, len(eligibleConnections))
+	connections = eligible
+	paths := make([]resolverRuntimePath, 0, len(connections))
 
 	preferredKey := ""
 	if streamID != 0 &&
@@ -348,7 +586,7 @@ func (c *Client) selectJointRuntimePaths(
 	}
 
 	c.resolverTransportMu.Lock()
-	for _, conn := range eligibleConnections {
+	for _, conn := range connections {
 		state := c.resolverTransportStateLocked(conn.Key)
 		transport, score, ok := c.bestPacketTransportLocked(conn.Key, state, packetType, payloadSize)
 		if !ok {
@@ -363,33 +601,99 @@ func (c *Client) selectJointRuntimePaths(
 			score *= 1.10
 		}
 		paths = append(paths, resolverRuntimePath{
-			connection: conn,
-			transport:  transport,
-			score:      score,
+			connection:         conn,
+			transport:          transport,
+			score:              score,
+			directionalSamples: directionalPathSamples(pathScoreFor(state, transport), packetType),
+			directionalRTT:     directionalPathRTT(pathScoreFor(state, transport), packetType),
 		})
 	}
 	c.resolverTransportMu.Unlock()
 
-	sort.SliceStable(paths, func(i, j int) bool {
-		if paths[i].score == paths[j].score {
-			return paths[i].connection.Key < paths[j].connection.Key
+	slices.SortStableFunc(paths, func(a, b resolverRuntimePath) int {
+		if a.score == b.score {
+			return strings.Compare(a.connection.Key, b.connection.Key)
 		}
-		return paths[i].score > paths[j].score
+		if a.score > b.score {
+			return -1
+		}
+		return 1
 	})
 	if len(paths) == 0 {
 		return nil
 	}
 
+	// Spread successive bulk packets only across paths whose authenticated
+	// foreground evidence says they are close in both delivered score and RTT.
+	// ARQ already tolerates reordering, while these guards avoid feeding an
+	// unknown or materially slower path merely to achieve nominal multipath.
+	if control.allowComparableStrip && len(paths) > 1 {
+		primary := paths[0]
+		candidateIndexes := []int{0}
+		weights := []uint64{100}
+		totalWeight := uint64(100)
+		for i := 1; i < len(paths) && len(candidateIndexes) < 4; i++ {
+			if !comparableStripeCandidate(primary, paths[i], packetType) {
+				continue
+			}
+			weight := uint64(paths[i].score / primary.score * 100)
+			if weight < 1 {
+				weight = 1
+			}
+			candidateIndexes = append(candidateIndexes, i)
+			weights = append(weights, weight)
+			totalWeight += weight
+		}
+		if len(candidateIndexes) > 1 {
+			// Multiplicative stepping distributes weighted choices immediately;
+			// a plain sequential ticket would send a long burst over the first
+			// path before reaching the next weight range.
+			ticket := ((c.pathStripeCursor.Add(1) - 1) * 0x9e3779b97f4a7c15) % totalWeight
+			chosen := 0
+			for i, weight := range weights {
+				if ticket < weight {
+					chosen = candidateIndexes[i]
+					break
+				}
+				ticket -= weight
+			}
+			if chosen > 0 {
+				paths[0], paths[chosen] = paths[chosen], paths[0]
+				c.pathStripeCount.Add(1)
+			}
+		}
+	}
+
 	selected := make([]resolverRuntimePath, 0, count+1)
-	seenResolvers := make(map[string]struct{}, count)
-	seenDomains := make(map[string]struct{}, count)
+	hasResolver := func(key string) bool {
+		for i := range selected {
+			if selected[i].connection.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	hasDomain := func(domain string) bool {
+		for i := range selected {
+			if selected[i].connection.Domain == domain {
+				return true
+			}
+		}
+		return false
+	}
+	hasNetwork := func(network string) bool {
+		for i := range selected {
+			if resolverNetworkGroup(selected[i].connection) == network {
+				return true
+			}
+		}
+		return false
+	}
 	appendPath := func(path resolverRuntimePath) bool {
-		if _, exists := seenResolvers[path.connection.Key]; exists {
+		if hasResolver(path.connection.Key) {
 			return false
 		}
 		selected = append(selected, path)
-		seenResolvers[path.connection.Key] = struct{}{}
-		seenDomains[path.connection.Domain] = struct{}{}
 		return true
 	}
 
@@ -398,7 +702,22 @@ func (c *Client) selectJointRuntimePaths(
 			if len(selected) >= count {
 				break
 			}
-			if _, duplicateDomain := seenDomains[path.connection.Domain]; duplicateDomain {
+			if hasDomain(path.connection.Domain) {
+				continue
+			}
+			if hasNetwork(resolverNetworkGroup(path.connection)) {
+				continue
+			}
+			appendPath(path)
+		}
+		// A deployment commonly has one tunnel domain but resolvers spread over
+		// several networks. Preserve that diversity before filling from a shared
+		// subnet, even when domain diversity is impossible.
+		for _, path := range paths {
+			if len(selected) >= count {
+				break
+			}
+			if hasNetwork(resolverNetworkGroup(path.connection)) {
 				continue
 			}
 			appendPath(path)
@@ -411,13 +730,19 @@ func (c *Client) selectJointRuntimePaths(
 		appendPath(path)
 	}
 
-	// Sparse control traffic can explore one alternate transport on the same
-	// resolver. Bulk packets never hedge, so exploration cannot cap throughput.
-	if len(selected) > 0 && Enums.DefaultPacketPriority(packetType) <= Enums.PacketPriorityHigh {
+	// Recovery races remain limited to control traffic. The globally bounded
+	// healthy exploration sample may use a real data frame so speed promotion
+	// compares equivalent upload traffic instead of extrapolating from ACKs.
+	if len(selected) > 0 {
 		primary := selected[0]
 		c.resolverTransportMu.Lock()
 		state := c.resolverTransportStateLocked(primary.connection.Key)
-		if state.lastProbe.IsZero() || now.Sub(state.lastProbe) >= transportProbeInterval {
+		recoveryHedge := control.allowRecoveryHedge &&
+			pathNeedsHedgeLocked(state, primary.transport, now)
+		healthyExplore := control.allowHealthyExplore &&
+			c.healthyExplorationAvailableLocked(state)
+		if (recoveryHedge || healthyExplore) &&
+			(state.lastProbe.IsZero() || now.Sub(state.lastProbe) >= transportProbeInterval) {
 			for _, alternate := range c.resolverTransportCandidates(primary.connection.Key) {
 				if alternate == primary.transport ||
 					!pathSupportsPacket(pathScoreFor(state, alternate), packetType, payloadSize) {
@@ -430,6 +755,10 @@ func (c *Client) selectJointRuntimePaths(
 					hedge:      true,
 				})
 				state.lastProbe = now
+				if healthyExplore {
+					c.transportExploreBudgetSends.Store(c.runtimeOriginalSends.Load())
+					c.transportExplorationCount.Add(1)
+				}
 				break
 			}
 		}
@@ -525,13 +854,18 @@ func (c *Client) chooseResolverTransport(serverKey string, priority int, now tim
 			(!current.viable || now.Sub(state.lastSwitch) >= transportSwitchCooldown) {
 			state.preferred = best
 			state.lastSwitch = now
+			c.transportSwitchCount.Add(1)
 		}
 	}
 	decision := resolverTransportDecision{primary: state.preferred}
 
-	// Sparse control/setup traffic samples one alternate path. Bulk data never
-	// gets transport-duplicated, so path learning cannot halve useful goodput.
+	// A fresh passive warning may race one control/setup packet over an
+	// alternate. Healthy-path comparison has a separate 0.1% foreground budget
+	// and is suppressed whenever queues are busy.
+	recoveryHedge := pathNeedsHedgeLocked(state, decision.primary, now)
+	healthyExplore := c.healthyExplorationAvailableLocked(state)
 	if priority <= Enums.PacketPriorityHigh &&
+		(recoveryHedge || healthyExplore) &&
 		(state.lastProbe.IsZero() || now.Sub(state.lastProbe) >= transportProbeInterval) {
 		for attempts := 0; attempts < len(candidates); attempts++ {
 			state.probeCursor = (state.probeCursor + 1) % len(candidates)
@@ -542,6 +876,10 @@ func (c *Client) chooseResolverTransport(serverKey string, priority int, now tim
 			decision.secondary = alternate
 			decision.hedge = true
 			state.lastProbe = now
+			if healthyExplore {
+				c.transportExploreBudgetSends.Store(c.runtimeOriginalSends.Load())
+				c.transportExplorationCount.Add(1)
+			}
 			break
 		}
 	}
@@ -557,7 +895,19 @@ func updatePathRTT(score *resolverPathScore, rtt time.Duration) {
 	}
 	if score.rttEWMA == 0 {
 		score.rttEWMA = rtt
+		score.rttVariation = rtt / 2
 		return
+	}
+	// RTT itself stays current on every authenticated reply. Variation changes
+	// more slowly, so sample it every fourth runtime success (and every probe,
+	// whose success counter is zero). This keeps the response hot path tiny and
+	// prevents one jitter spike from oversteering failure deadlines.
+	if score.successes == 0 || score.successes&3 == 0 {
+		delta := score.rttEWMA - rtt
+		if delta < 0 {
+			delta = -delta
+		}
+		score.rttVariation = (score.rttVariation*3 + delta) / 4
 	}
 	score.rttEWMA = (score.rttEWMA*7 + rtt) / 8
 }
@@ -584,8 +934,13 @@ func (c *Client) noteResolverTransportProbe(
 		score.uploadLoss = result.UploadLoss
 		score.downloadLoss = result.DownloadLoss
 		score.failureStreak = 0
+		score.uploadFailureStreak = 0
+		score.downloadFailureStreak = 0
+		score.truncationStreak = 0
 		score.lastSuccess = now
 		updatePathRTT(score, result.ResolveTime)
+		updateDirectionalRTT(&score.uploadRTTEWMA, result.ResolveTime)
+		updateDirectionalRTT(&score.downloadRTTEWMA, result.ResolveTime)
 	} else {
 		score.lastFailure = now
 	}
@@ -599,11 +954,36 @@ func (c *Client) noteResolverTransportProbe(
 		if best != state.preferred {
 			state.preferred = best
 			state.lastSwitch = now
+			c.transportSwitchCount.Add(1)
 		}
 	}
 }
 
+// noteResolverTransportSuccess is retained for synchronous setup/probe paths
+// that do not expose a packet class. Such a completed exchange proves both
+// request and response delivery.
 func (c *Client) noteResolverTransportSuccess(serverKey string, transport resolverTransport, rtt time.Duration, now time.Time) {
+	c.noteResolverTransportSuccessClass(serverKey, transport, rtt, 0, true, now)
+}
+
+func (c *Client) noteResolverTransportSuccessForPacket(
+	serverKey string,
+	transport resolverTransport,
+	rtt time.Duration,
+	packetType uint8,
+	now time.Time,
+) {
+	c.noteResolverTransportSuccessClass(serverKey, transport, rtt, packetType, false, now)
+}
+
+func (c *Client) noteResolverTransportSuccessClass(
+	serverKey string,
+	transport resolverTransport,
+	rtt time.Duration,
+	packetType uint8,
+	bidirectional bool,
+	now time.Time,
+) {
 	if c == nil || serverKey == "" || !validResolverTransport(transport) {
 		return
 	}
@@ -620,26 +1000,94 @@ func (c *Client) noteResolverTransportSuccess(serverKey string, transport resolv
 		score.downloadMTU = max(1, c.syncedDownloadMTU)
 	}
 	score.successes++
+	noteRuntimeDeliveryForPacket(score, true, packetType, bidirectional)
+	if bidirectional || !packetUsesDownloadPath(packetType) {
+		score.uploadSuccesses++
+		score.uploadFailureStreak = 0
+		updateDirectionalRTT(&score.uploadRTTEWMA, rtt)
+	}
+	if bidirectional || packetUsesDownloadPath(packetType) {
+		score.downloadSuccesses++
+		score.downloadFailureStreak = 0
+		updateDirectionalRTT(&score.downloadRTTEWMA, rtt)
+	}
 	score.failureStreak = 0
+	score.truncationStreak = 0
 	score.lastSuccess = now
 	updatePathRTT(score, rtt)
 
-	if now.Sub(state.lastSwitch) < transportSwitchCooldown {
+	// Preferred-path replies normally add telemetry only. Reconsider promotion
+	// when a challenger delivers new evidence, or exactly when the preferred
+	// path first becomes comparable. This keeps fleet-wide scoring out of the
+	// per-response hot path.
+	if transport == state.preferred &&
+		score.uploadSuccesses != transportSpeedSampleThreshold &&
+		score.downloadSuccesses != transportSpeedSampleThreshold {
 		return
 	}
-	best := c.bestResolverTransportLocked(serverKey, state)
+	if now.Sub(state.lastSwitch) < transportSpeedSwitchCooldown {
+		return
+	}
 	current := pathScoreFor(state, state.preferred)
-	better := pathScoreFor(state, best)
-	if best != state.preferred &&
-		better != nil && better.successes >= transportSpeedSampleThreshold &&
-		(current == nil || current.successes >= transportSpeedSampleThreshold) &&
-		pathEstimatedGoodput(better) > pathEstimatedGoodput(current)*transportSpeedSwitchRatio {
+	if current == nil ||
+		current.uploadSuccesses < transportSpeedSampleThreshold ||
+		current.downloadSuccesses < transportSpeedSampleThreshold {
+		return
+	}
+	currentUpload := pathEstimatedGoodputForPacket(current, Enums.PACKET_STREAM_DATA)
+	currentDownload := pathEstimatedGoodputForPacket(current, Enums.PACKET_STREAM_DATA_ACK)
+	best := state.preferred
+	bestCombined := currentUpload * currentDownload
+	for _, candidate := range c.resolverTransportCandidates(serverKey) {
+		if candidate == state.preferred {
+			continue
+		}
+		challenger := pathScoreFor(state, candidate)
+		if !c.pathSupportsSession(challenger) ||
+			challenger.uploadSuccesses < transportSpeedSampleThreshold ||
+			challenger.downloadSuccesses < transportSpeedSampleThreshold {
+			continue
+		}
+		upload := pathEstimatedGoodputForPacket(challenger, Enums.PACKET_STREAM_DATA)
+		download := pathEstimatedGoodputForPacket(challenger, Enums.PACKET_STREAM_DATA_ACK)
+		// A resolver transport is shared by both directions. Promote it for
+		// speed only when both directions improve materially; an asymmetric
+		// control-path win must never slow the upload data plane.
+		if upload <= currentUpload*transportSpeedSwitchRatio ||
+			download <= currentDownload*transportSpeedSwitchRatio {
+			continue
+		}
+		if combined := upload * download; combined > bestCombined {
+			best, bestCombined = candidate, combined
+		}
+	}
+	if best != state.preferred {
 		state.preferred = best
 		state.lastSwitch = now
+		c.transportSwitchCount.Add(1)
 	}
 }
 
 func (c *Client) noteResolverTransportFailure(serverKey string, transport resolverTransport, now time.Time) {
+	c.noteResolverTransportFailureClass(serverKey, transport, 0, true, now)
+}
+
+func (c *Client) noteResolverTransportFailureForPacket(
+	serverKey string,
+	transport resolverTransport,
+	packetType uint8,
+	now time.Time,
+) {
+	c.noteResolverTransportFailureClass(serverKey, transport, packetType, false, now)
+}
+
+func (c *Client) noteResolverTransportFailureClass(
+	serverKey string,
+	transport resolverTransport,
+	packetType uint8,
+	bidirectional bool,
+	now time.Time,
+) {
 	if c == nil || serverKey == "" || !validResolverTransport(transport) {
 		return
 	}
@@ -648,10 +1096,25 @@ func (c *Client) noteResolverTransportFailure(serverKey string, transport resolv
 	state := c.resolverTransportStateLocked(serverKey)
 	score := pathScoreFor(state, transport)
 	score.failures++
+	noteRuntimeDeliveryForPacket(score, false, packetType, bidirectional)
 	score.lastFailure = now
 	if score.failureStreak < 255 {
 		score.failureStreak++
 	}
+	if bidirectional || !packetUsesDownloadPath(packetType) {
+		if score.uploadFailureStreak < 255 {
+			score.uploadFailureStreak++
+		}
+	}
+	if bidirectional || packetUsesDownloadPath(packetType) {
+		if score.downloadFailureStreak < 255 {
+			score.downloadFailureStreak++
+		}
+	}
+	// Make the next eligible control packet perform one useful alternate race.
+	// pathNeedsHedgeLocked prevents periodic duplication after that evidence has
+	// been consumed.
+	state.lastProbe = time.Time{}
 	requiredFailures := uint8(transportFailureSwitchThreshold)
 	if !score.lastPoison.IsZero() {
 		poisonAge := now.Sub(score.lastPoison)
@@ -681,13 +1144,15 @@ func (c *Client) noteResolverTransportFailure(serverKey string, transport resolv
 	if best != transport && c.pathSupportsSession(pathScoreFor(state, best)) {
 		state.preferred = best
 		state.lastSwitch = now
+		c.transportSwitchCount.Add(1)
 	}
 }
 
-// noteResolverTransportHardFailure handles an explicit path-level rejection
-// such as UDP truncation. Waiting for a second timeout wastes an entire ARQ RTO,
-// so an eligible alternate becomes preferred immediately.
-func (c *Client) noteResolverTransportHardFailure(serverKey string, transport resolverTransport, now time.Time) {
+// noteResolverTransportTruncation treats TC=1 as a capacity observation, not
+// proof that UDP is dead. The affected request is replayed immediately, while
+// UDP remains preferred unless truncation repeats without an intervening valid
+// reply. This preserves UDP speed through occasional oversized DNS answers.
+func (c *Client) noteResolverTransportTruncation(serverKey string, transport resolverTransport, now time.Time) {
 	if c == nil || serverKey == "" || !validResolverTransport(transport) {
 		return
 	}
@@ -695,12 +1160,13 @@ func (c *Client) noteResolverTransportHardFailure(serverKey string, transport re
 	defer c.resolverTransportMu.Unlock()
 	state := c.resolverTransportStateLocked(serverKey)
 	score := pathScoreFor(state, transport)
-	score.failures++
-	score.lastFailure = now
-	if score.failureStreak < transportFailureSwitchThreshold {
-		score.failureStreak = transportFailureSwitchThreshold
+	score.truncations++
+	score.lastTruncation = now
+	if score.truncationStreak < 255 {
+		score.truncationStreak++
 	}
-	if state.preferred != transport {
+	state.lastProbe = time.Time{}
+	if state.preferred != transport || score.truncationStreak < transportTruncationThreshold {
 		return
 	}
 	for _, candidate := range c.resolverTransportCandidates(serverKey) {
@@ -712,10 +1178,12 @@ func (c *Client) noteResolverTransportHardFailure(serverKey string, transport re
 			state.preferred = candidate
 			state.lastSwitch = now
 			state.lastProbe = time.Time{}
+			c.transportSwitchCount.Add(1)
 			return
 		}
 	}
 }
+
 func (c *Client) noteResolverTransportPoison(serverKey string, transport resolverTransport) {
 	if c == nil || serverKey == "" || !validResolverTransport(transport) {
 		return
