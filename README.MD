@@ -41,6 +41,7 @@
 | I want to… | Go to |
 | --- | --- |
 | Deploy a new tunnel | [Complete setup guide](#complete-setup-guide) |
+| Run the server with Docker | [Docker server installation](#docker-server-installation) |
 | Understand the adaptive transport system | [Automatic behavior](#automatic-behavior) |
 | Pick a speed or survival profile | [Choose a profile](#choose-a-profile) |
 | Check server load and tunnel health | [Monitoring](#monitoring) |
@@ -281,6 +282,146 @@ journalctl -u cottendns -n 100 --no-pager
 ```
 
 The metrics listener intentionally binds to localhost. Do not expose port `9090` publicly just to make these checks work.
+
+### Docker server installation
+
+Docker is an alternative to the systemd server installation in Steps 2 and 3.
+The supported image is published from this repository to
+`ghcr.io/tajirax/cottendns-server` for AMD64 and ARM64 Linux. It runs the
+CottenDNS process as a non-root user, persists the configuration and encryption
+key under `/data`, and includes the same local health endpoint as the native
+service.
+
+#### Requirements
+
+- A Linux VPS with Docker Engine and the Docker Compose plugin.
+- The DNS delegation from Step 1.
+- Free UDP/53 and TCP/53 ports on the host.
+- Inbound UDP/53 and TCP/53 allowed in both the provider firewall and the host
+  firewall.
+
+Check for an existing DNS service before starting:
+
+```bash
+sudo ss -lntup | grep ':53 '
+docker --version
+docker compose version
+```
+
+If BIND, dnsmasq, `systemd-resolved`, or another container owns port 53, stop or
+reconfigure that service first. The container uses host networking so DNS
+traffic reaches CottenDNS without Docker NAT overhead.
+
+#### One-line installation
+
+Replace `v.example.com` with the delegated tunnel domain:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TaJirax/cottenDNS/main/server_docker_install.sh \
+  | sudo sh -s -- --domain v.example.com
+```
+
+The installer creates `/opt/cottendns-docker`, downloads the repository-owned
+Compose file, pulls the current image, starts the server, and waits until the
+container health check passes. Persistent files are stored here:
+
+```text
+/opt/cottendns-docker/data/server_config.toml
+/opt/cottendns-docker/data/encrypt_key.txt
+/opt/cottendns-docker/.env
+```
+
+Read the generated key and transfer it securely to the client:
+
+```bash
+sudo cat /opt/cottendns-docker/data/encrypt_key.txt
+```
+
+Verify the deployment:
+
+```bash
+cd /opt/cottendns-docker
+sudo docker compose ps
+sudo docker compose logs --tail=100 server
+curl -fsS http://127.0.0.1:9090/healthz
+sudo ss -lnup | grep ':53 '
+sudo ss -lntp | grep ':53 '
+```
+
+The metrics endpoint stays bound to `127.0.0.1:9090`. Do not publish it to the
+Internet. For detailed health and Prometheus data, use the commands in
+[Monitoring](#monitoring).
+
+#### Configure and restart
+
+Edit non-domain settings in the persistent server configuration, then restart
+the server process:
+
+```bash
+sudoedit /opt/cottendns-docker/data/server_config.toml
+cd /opt/cottendns-docker
+sudo docker compose restart server
+sudo docker compose logs --tail=100 server
+```
+
+The domain is controlled by `COTTENDNS_DOMAIN` in
+`/opt/cottendns-docker/.env`. After changing it, recreate the container so
+Compose loads the new environment:
+
+```bash
+sudoedit /opt/cottendns-docker/.env
+cd /opt/cottendns-docker
+sudo docker compose up -d --force-recreate
+```
+
+The entrypoint writes this value into `server_config.toml` at startup, so do not
+set a different `DOMAIN` value in the TOML file.
+
+#### Upgrade, pin, and roll back
+
+Upgrade to the newest published image without replacing the active
+configuration or encryption key:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TaJirax/cottenDNS/main/server_docker_install.sh \
+  | sudo sh -s -- --upgrade
+```
+
+Back up persistent state before an upgrade:
+
+```bash
+sudo cp -a /opt/cottendns-docker/data \
+  "/opt/cottendns-docker/data.backup.$(date +%Y%m%d-%H%M%S)"
+```
+
+For a reproducible deployment, set `COTTENDNS_IMAGE_TAG` in
+`/opt/cottendns-docker/.env` to a release tag instead of `latest`:
+
+```dotenv
+COTTENDNS_DOMAIN=v.example.com
+COTTENDNS_IMAGE_TAG=vYYYY.MM.DD.HHMMSS-commithash
+```
+
+Apply a pinned version—or roll back by selecting the previous known-good
+tag—with:
+
+```bash
+cd /opt/cottendns-docker
+sudo docker compose pull
+sudo docker compose up -d --remove-orphans
+curl -fsS http://127.0.0.1:9090/healthz
+```
+
+Stop and remove only the container and Compose-managed resources:
+
+```bash
+cd /opt/cottendns-docker
+sudo docker compose down
+```
+
+The bind-mounted `data` directory remains on disk. Preserve
+`server_config.toml` and `encrypt_key.txt`; deleting or replacing the key
+disconnects clients that use it.
 
 ### Step 4 — Download the correct client
 
