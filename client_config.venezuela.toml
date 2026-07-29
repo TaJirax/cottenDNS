@@ -1,5 +1,0 @@
-# CottenDNS adaptive starting profile for DNS tampering and unstable networks.
-
-CONFIG_PRESET = "venezuela"
-DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
-ENCRYPTION_KEY = ""

@@ -1,6 +1,0 @@
-# CottenDNS adaptive starting profile for DPI and transport-stall conditions.
-# UDP remains preferred while healthy; fallback decisions are per resolver.
-
-CONFIG_PRESET = "russia"
-DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
-ENCRYPTION_KEY = ""

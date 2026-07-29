@@ -10,9 +10,6 @@ import (
 	"cottendns-go/internal/logger"
 )
 
-const warmPathForegroundFramesPerScan = uint64(4096)
-const warmPathMinimumIdle = 750 * time.Millisecond
-
 type resolverHealthEvent struct {
 	At time.Time
 }
@@ -159,7 +156,6 @@ func (c *Client) initResolverRecheckMeta() {
 
 	c.resolverStatsMu.Lock()
 	c.resolverPending = make(map[resolverSampleKey]resolverSample)
-	c.resolverCompleted = make(map[resolverCompletedKey]time.Time)
 	c.resolverStatsMu.Unlock()
 
 	c.resolverHealthMu.Lock()
@@ -199,7 +195,6 @@ func (c *Client) runResolverHealthLoop(ctx context.Context) {
 		c.collectExpiredResolverTimeouts(now)
 		c.runResolverAutoDisable(now)
 		c.runResolverRecheckBatch(ctx, now)
-		c.runResolverTransportBackgroundScan(ctx, now)
 
 		waitFor := c.nextResolverHealthWait(now)
 		timer := time.NewTimer(waitFor)
@@ -214,177 +209,6 @@ func (c *Client) runResolverHealthLoop(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
-}
-
-// runResolverTransportBackgroundScan performs full MTU discovery on one
-// resolver/transport path per interval. Narrow successful paths remain useful
-// for packets that fit instead of being rejected against the global session
-// MTU. The scan shares the bounded recheck semaphore and rotates slowly, keeping
-// path intelligence fresh without creating a burst beside live user traffic.
-func (c *Client) runResolverTransportBackgroundScan(ctx context.Context, now time.Time) {
-	if c == nil || !c.successMTUChecks || c.syncedUploadMTU <= 0 || c.syncedDownloadMTU <= 0 {
-		return
-	}
-	interval := c.transportBackgroundScanInterval()
-	var (
-		selected    Connection
-		selectedSet bool
-		oldest      time.Time
-	)
-	c.resolverTransportMu.Lock()
-	for _, conn := range c.connections {
-		if !conn.IsValid {
-			continue
-		}
-		state := c.resolverTransportStateLocked(conn.Key)
-		if !state.lastBackgroundScan.IsZero() && now.Sub(state.lastBackgroundScan) < interval {
-			continue
-		}
-		if !selectedSet || state.lastBackgroundScan.Before(oldest) {
-			selected, selectedSet, oldest = conn, true, state.lastBackgroundScan
-		}
-	}
-	c.resolverTransportMu.Unlock()
-	if !selectedSet || !c.tryAcquireResolverRecheckSlot() {
-		return
-	}
-	if !c.allowWarmPathExploration(now, interval) {
-		c.releaseResolverRecheckSlot()
-		return
-	}
-	c.resolverTransportMu.Lock()
-	selectedState := c.resolverTransportStateLocked(selected.Key)
-	selectedState.lastBackgroundScan = now
-	selectedState.backgroundProbeActive = true
-	c.resolverTransportMu.Unlock()
-
-	go func(conn Connection) {
-		defer c.releaseResolverRecheckSlot()
-		defer func() {
-			c.resolverTransportMu.Lock()
-			c.resolverTransportStateLocked(conn.Key).backgroundProbeActive = false
-			c.resolverTransportMu.Unlock()
-		}()
-		c.refreshResolverTransportPath(ctx, &conn)
-	}(selected)
-}
-
-func (c *Client) allowWarmPathExploration(now time.Time, interval time.Duration) bool {
-	if c == nil || c.runtimeCongested() {
-		return false
-	}
-	// A warm scan may issue dozens of MTU queries. Even when its accounting
-	// budget has accrued, it must wait for a real foreground gap so health work
-	// never steals capacity or queue time from the user.
-	if len(c.txChannel) != 0 || len(c.encodedTXChannel) != 0 || len(c.rxChannel) != 0 {
-		return false
-	}
-	if lastSendUnix := c.lastTunnelSendUnix.Load(); lastSendUnix > 0 &&
-		now.Sub(time.Unix(0, lastSendUnix)) < warmPathMinimumIdle {
-		return false
-	}
-	foreground := c.runtimeOriginalSends.Load()
-	chargedThrough := c.warmPathBudgetSends.Load()
-	if foreground >= chargedThrough+warmPathForegroundFramesPerScan {
-		c.warmPathBudgetSends.Store(foreground)
-		c.warmPathLastScanUnix.Store(now.UnixNano())
-		return true
-	}
-
-	staleAfter := 4 * interval
-	if staleAfter < 2*time.Minute {
-		staleAfter = 2 * time.Minute
-	}
-	lastUnix := c.warmPathLastScanUnix.Load()
-	if lastUnix == 0 || now.Sub(time.Unix(0, lastUnix)) < staleAfter {
-		return false
-	}
-	c.warmPathBudgetSends.Store(foreground)
-	c.warmPathLastScanUnix.Store(now.UnixNano())
-	return true
-}
-
-func (c *Client) runtimeCongested() bool {
-	if c == nil {
-		return true
-	}
-	channelBusy := func(length, capacity int) bool {
-		return capacity > 0 && length >= max(1, capacity/4)
-	}
-	if channelBusy(len(c.txChannel), cap(c.txChannel)) ||
-		channelBusy(len(c.encodedTXChannel), cap(c.encodedTXChannel)) ||
-		channelBusy(len(c.rxChannel), cap(c.rxChannel)) {
-		return true
-	}
-	c.resolverStatsMu.RLock()
-	pending := len(c.resolverPending)
-	c.resolverStatsMu.RUnlock()
-	return pending >= resolverPendingSoftCap/4
-}
-
-func (c *Client) refreshResolverTransportPath(ctx context.Context, conn *Connection) {
-	if c == nil || conn == nil {
-		return
-	}
-	candidates := c.resolverTransportCandidates(conn.Key)
-	if len(candidates) == 0 {
-		return
-	}
-
-	c.resolverTransportMu.Lock()
-	state := c.resolverTransportStateLocked(conn.Key)
-	index := state.backgroundCursor % len(candidates)
-	state.backgroundCursor = (state.backgroundCursor + 1) % len(candidates)
-	transport := candidates[index]
-	c.resolverTransportMu.Unlock()
-
-	maxUploadPayload := c.cfg.MaxUploadMTU
-	if maxUploadPayload <= 0 || maxUploadPayload > defaultUploadMaxCap {
-		maxUploadPayload = defaultUploadMaxCap
-	}
-	if c.codec != nil {
-		if domainCap := c.maxUploadMTUPayload(conn.Domain); domainCap > 0 && domainCap < maxUploadPayload {
-			maxUploadPayload = domainCap
-		}
-	}
-
-	// Abort a background MTU scan as soon as foreground work resumes. The
-	// initial idle gate prevents contention at launch; this guard prevents a
-	// scan already in progress from occupying the newly-needed carrier.
-	probeParent := ctx
-	if probeParent == nil {
-		probeParent = context.Background()
-	}
-	probeCtx, cancelProbe := context.WithCancel(probeParent)
-	baselineSends := c.runtimeOriginalSends.Load()
-	probeFinished := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(25 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-probeFinished:
-				return
-			case <-probeCtx.Done():
-				return
-			case <-ticker.C:
-				if c.runtimeOriginalSends.Load() != baselineSends ||
-					len(c.txChannel) != 0 || len(c.encodedTXChannel) != 0 || len(c.rxChannel) != 0 {
-					cancelProbe()
-					return
-				}
-			}
-		}
-	}()
-	result, reason := c.probeConnectionMTUOver(probeCtx, conn, maxUploadPayload, transport)
-	probeCanceled := probeCtx.Err() != nil
-	close(probeFinished)
-	cancelProbe()
-	if probeCanceled {
-		// Preemption is not path failure; retain the last passive/probe score.
-		return
-	}
-	c.noteResolverTransportProbe(conn.Key, transport, result, reason == mtuRejectNone, c.now())
 }
 
 func (c *Client) nextResolverHealthWait(now time.Time) time.Duration {
@@ -1064,68 +888,43 @@ func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection
 		return true
 	}
 
-	anyPassed := false
-	for _, transport := range c.resolverTransportCandidates(conn.Key) {
-		result, passed := c.probeResolverAtSessionMTU(ctx, conn, transport)
-		c.noteResolverTransportProbe(conn.Key, transport, result, passed, c.now())
-		if passed {
-			anyPassed = true
-		}
-	}
-	return anyPassed
-}
-
-func (c *Client) probeResolverAtSessionMTU(
-	ctx context.Context,
-	conn *Connection,
-	transportKind resolverTransport,
-) (mtuConnectionProbeResult, bool) {
-	if c.probeSessionMTUOverFn != nil {
-		return c.probeSessionMTUOverFn(ctx, conn, transportKind)
-	}
-	var result mtuConnectionProbeResult
-	transport, err := c.newQueryTransportOver(conn.ResolverLabel, transportKind)
+	transport, err := c.newQueryTransport(conn.ResolverLabel)
 	if err != nil {
-		return result, false
+		return false
 	}
 	defer transport.Close()
 
 	upOK := false
 	for attempt := 0; attempt < c.mtuTestRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return result, false
+			return false
 		}
-		passed, rtt, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			upOK = true
-			result.UploadBytes = c.syncedUploadMTU
-			result.UploadChars = c.encodedCharsForPayload(c.syncedUploadMTU)
-			result.ResolveTime = rtt
 			break
 		}
 	}
 	if !upOK {
-		return result, false
+		return false
 	}
 
 	downOK := false
 	for attempt := 0; attempt < c.mtuTestRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return result, false
+			return false
 		}
-		passed, rtt, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			downOK = true
-			result.DownloadBytes = c.syncedDownloadMTU
-			result.ResolveTime = averageMTUProbeRTT(result.ResolveTime, rtt)
 			break
 		}
 	}
 	if !downOK {
-		return result, false
+		return false
 	}
 
-	return result, true
+	return true
 }
 
 func (c *Client) applyRecheckedResolverMTU(serverKey string) bool {

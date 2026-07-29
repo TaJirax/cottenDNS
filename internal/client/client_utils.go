@@ -1,4 +1,4 @@
-// ==============================================================================
+﻿// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -521,7 +521,7 @@ func (c *Client) ShortPrintBanner() {
 	}
 
 	c.log.Infof("============================================================")
-	c.log.Infof("<cyan>GitHub:</cyan> <yellow>https://github.com/TaJirax/CottenDns</yellow>")
+	c.log.Infof("<cyan>GitHub:</cyan> <yellow>https://github.com/WhiteDNS/CottenDns</yellow>")
 	c.log.Infof("<cyan>Telegram:</cyan> <yellow>https://t.me/whitedns</yellow>")
 	c.log.Infof("<cyan>Build Version:</cyan> <yellow>%s</yellow>", version.GetVersion())
 	c.log.Infof("============================================================")
@@ -587,16 +587,14 @@ func (c *Client) BuildConnectionMap() error {
 			}
 
 			indexByKey[key] = len(connections)
-			connection := Connection{
+			connections = append(connections, Connection{
 				Domain:        domain,
 				Resolver:      resolver.IP,
 				ResolverPort:  resolver.Port,
 				ResolverLabel: label,
 				Key:           key,
 				IsValid:       true,
-			}
-			connection.networkGroup = resolverNetworkGroup(connection)
-			connections = append(connections, connection)
+			})
 			if ip := net.ParseIP(resolver.IP); ip != nil {
 				c.resolverAddrCache[label] = &net.UDPAddr{IP: ip, Port: resolver.Port}
 			}

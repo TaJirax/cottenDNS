@@ -1,53 +1,14 @@
 # Android external-engine integration
 
-The CottenDNS client engine is owned and versioned by this repository. The
-WhiteDNS Android application consumes it as source at a pinned commit and builds
-the native binaries itself. This repository ships no Android application.
-Vendored snapshots and submodules are both valid, but the application must
-record the exact upstream revision and must not carry unreviewed engine edits.
-
-## Pinned-source contract
-
-The personal Android repository currently vendors an immutable snapshot and
-records its source revision:
-
-```bash
-git archive --format=tar <reviewed-engine-sha> | tar -xf - -C third_party/CottenDns
-printf 'repository=https://github.com/TaJirax/cottenDNS\ncommit=%s\n' \
-  <reviewed-engine-sha> > third_party/CottenDns.UPSTREAM
-```
-
-A submodule consumer may instead pin the same immutable revision:
-
-```bash
-git submodule add https://github.com/TaJirax/cottenDNS .engine/CottenDns
-git -C .engine/CottenDns checkout <reviewed-engine-sha>
-git add .gitmodules .engine/CottenDns
-```
-
-What this repository guarantees so that works:
-
-- `go build ./cmd/client` is the only entry point needed. The module is
-  self-contained; there are no submodules of its own and no generated artifacts
-  are tracked (built binaries and `dist/` are gitignored), so the checkout stays
-  small.
-- `scripts/build-android-client.sh` resolves its own module root, so the Android
-  workspace can invoke it by path from anywhere without `cd`.
-- Advancing the recorded source revision is the only step needed to pick up
-  engine behavior; there is no Kotlin-side port.
-- CI here cross-compiles all four ABIs through that script on every push, so a
-  commit that stops being a valid Android engine source cannot reach the branch
-  the app pins against.
-
-Release CI must verify the recorded revision before building so a stale or
-locally modified engine cannot silently enter an APK.
+The CottenDNS client engine is owned and versioned by this repository. Android
+applications should not keep a modified copy under `third_party/`; CI should
+check out an immutable CottenDNS commit or release tag and build that source.
 
 ## CI contract
 
 1. Check out the Android application repository.
-2. Check out `TaJirax/cottenDNS` at a pinned full commit SHA as vendored source,
-   a submodule, or into a sibling directory. Do not track a moving branch for release
-   builds.
+2. Check out `WhiteDNS/CottenDns` into a temporary or sibling directory at a
+   pinned full commit SHA. Do not track a moving branch for release builds.
 3. Install the Go version from `go.mod` and Android NDK `29.0.14206865`.
 4. From the CottenDNS checkout, run:
 
@@ -68,7 +29,7 @@ engine commit):
 - uses: actions/checkout@v4
 - uses: actions/checkout@v4
   with:
-    repository: TaJirax/cottenDNS
+    repository: WhiteDNS/CottenDns
     ref: 0123456789abcdef0123456789abcdef01234567
     path: .engine/CottenDns
 - uses: actions/setup-go@v5
@@ -98,10 +59,6 @@ existing launcher contract. The linker flags provide 16 KiB page compatibility.
   and `WD_SCAN`.
 - Generic SOCKS5 UDP, DNS fallback, loss recovery, adaptive duplication, and
   server-advertised fairness remain part of this source tree.
-- Poison-aware question validation, per-resolver transport selection,
-  packet-size-aware narrow-MTU routing, and rotating background path discovery
-  are implemented inside this engine. Android receives the same behavior without
-  a Kotlin port when its pinned CottenDNS SHA is advanced.
 
 Pinning the engine SHA makes debug and release builds use identical engine code
 and prevents stale prebuilt binaries from silently surviving an app merge.
