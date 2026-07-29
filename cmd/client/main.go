@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"cottendns-go/internal/client"
 	"cottendns-go/internal/config"
@@ -27,44 +26,6 @@ func waitForExitInput() {
 	_, _ = fmt.Fprint(os.Stderr, "Press Enter to exit...")
 	reader := bufio.NewReader(os.Stdin)
 	_, _ = reader.ReadString('\n')
-}
-
-// promptStartupMode shows an interactive prompt when STARTUP_MODE is "ask".
-// Returns true if the user chooses to start from log files.
-// Auto-selects client_resolvers.txt after 10 seconds with no input.
-func promptStartupMode(preConfig config.ClientStartupPreConfig) bool {
-	switch preConfig.StartupMode {
-	case "resolvers":
-		return false
-	case "logs":
-		return true
-	}
-
-	// Interactive mode: ask the user with a 10-second timeout.
-	_, _ = fmt.Fprintln(os.Stderr)
-	_, _ = fmt.Fprintln(os.Stderr, "How do you want to start?")
-	_, _ = fmt.Fprintln(os.Stderr, "  [1] Start from client_resolvers.txt (full scan)")
-	_, _ = fmt.Fprintln(os.Stderr, "  [2] Start from log files (fast start)")
-	_, _ = fmt.Fprint(os.Stderr, "Enter your choice (auto-selects 1 in 10 seconds): ")
-
-	inputCh := make(chan byte, 1)
-	go func() {
-		buf := make([]byte, 1)
-		if _, err := os.Stdin.Read(buf); err == nil {
-			inputCh <- buf[0]
-		} else {
-			inputCh <- '1'
-		}
-	}()
-
-	select {
-	case b := <-inputCh:
-		_, _ = fmt.Fprintln(os.Stderr)
-		return b == '2'
-	case <-time.After(10 * time.Second):
-		_, _ = fmt.Fprint(os.Stderr, "\nAuto-selected: client_resolvers.txt\n")
-		return false
-	}
 }
 
 func main() {
@@ -91,30 +52,10 @@ func main() {
 		overrides.ResolversFilePath = &resolvedResolversPath
 	}
 
-	// Peek at startup-mode fields before loading the full config so we can
-	// present the prompt without side-effects.
-	preConfig := config.PeekClientStartupConfig(resolvedConfigPath)
-	fromLogs := false
-	if !*scanOnly {
-		fromLogs = promptStartupMode(preConfig)
-	}
-
-	var app *client.Client
-	if fromLogs {
-		entries := client.ScanResolverCacheLogs(
-			preConfig.ResolvedLogDir(),
-			preConfig.LogScanMaxDays,
-			preConfig.LogScanMaxResolvers,
-		)
-		if len(entries) > 0 {
-			app, err = client.BootstrapFromLogs(resolvedConfigPath, entries, overrides)
-		} else {
-			// No usable log entries found — silently fall back to the normal path.
-			app, err = client.Bootstrap(resolvedConfigPath, overrides)
-		}
-	} else {
-		app, err = client.Bootstrap(resolvedConfigPath, overrides)
-	}
+	// Resolver conditions change too quickly on the target networks to trust a
+	// previous-run cache. Every process start builds from the current resolver
+	// source and performs fresh authenticated MTU/path validation.
+	app, err := client.Bootstrap(resolvedConfigPath, overrides)
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Client startup failed: %v\n", err)

@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -382,89 +381,12 @@ func Bootstrap(configPath string, overrides config.ClientConfigOverrides) (*Clie
 	return c, nil
 }
 
-// BootstrapFromLogs initializes a new Client using working resolvers recovered from
-// previous session logs, skipping the full MTU scan when LOG_BASED_MTU_VERIFY is false.
-// When entries is empty it falls back to the normal Bootstrap path.
-func BootstrapFromLogs(configPath string, entries []ResolverCacheEntry, overrides config.ClientConfigOverrides) (*Client, error) {
-	if len(entries) == 0 {
-		return Bootstrap(configPath, overrides)
-	}
-
-	// Build a deduplicated resolver list from the log entries.
-	seen := make(map[string]struct{}, len(entries))
-	resolvers := make([]config.ResolverAddress, 0, len(entries))
-	for _, e := range entries {
-		epKey := e.IP + "|" + strconv.Itoa(e.Port)
-		if _, exists := seen[epKey]; exists {
-			continue
-		}
-		seen[epKey] = struct{}{}
-		resolvers = append(resolvers, config.ResolverAddress{IP: e.IP, Port: e.Port})
-	}
-	overrides.Resolvers = resolvers
-
-	cfg, err := config.LoadClientConfigWithOverrides(configPath, overrides)
-	if err != nil {
-		return nil, err
-	}
-	cfg.ApplyStartupModeMTU("logs")
-
-	log := logger.New("CottenDns Client", cfg.LogLevel)
-
-	codec, err := security.NewCodec(cfg.DataEncryptionMethod, cfg.EncryptionKey)
-	if err != nil {
-		return nil, fmt.Errorf("client codec setup failed: %w", err)
-	}
-
-	c := New(cfg, log, codec)
-	c.connectionsHavePreknownMTU = true
-	c.logBasedMTUVerify = cfg.LogBasedMTUVerify
-
-	if err := c.BuildConnectionMap(); err != nil {
-		if c.log != nil {
-			c.log.Errorf("<red>%v</red>", err)
-		}
-		return nil, err
-	}
-
-	// Pre-fill MTU values from log entries into the connection map.
-	mtuLookup := buildResolverCacheMTULookup(entries)
-	for i := range c.connections {
-		conn := &c.connections[i]
-		key := makeConnectionKey(conn.Resolver, conn.ResolverPort, conn.Domain)
-		if e, ok := mtuLookup[key]; ok && e.UploadMTU > 0 && e.DownloadMTU > 0 {
-			conn.IsValid = true
-			conn.UploadMTUBytes = e.UploadMTU
-			conn.DownloadMTUBytes = e.DownloadMTU
-			conn.UploadMTUChars = c.encodedCharsForPayload(e.UploadMTU)
-			conn.UploadMTULoss = float64(e.UploadLossPerMille) / 1000
-			conn.DownloadMTULoss = float64(e.DownloadLossPerMille) / 1000
-			// Tiers (primary vs backup) are intentionally NOT restored from the
-			// log; they are re-derived from these per-resolver MTUs by
-			// finalizeMTUSelection during startup, so the operating point always
-			// reflects the resolver set actually present this run.
-		}
-	}
-
-	if cacheLogPath := cfg.ResolvedResolverCacheLogPath(); cacheLogPath != "" {
-		c.openResolverCacheLog(cacheLogPath)
-	}
-
-	return c, nil
-}
-
-// buildResolverCacheMTULookup builds a connection-key → ResolverCacheEntry map.
-// When the same key appears multiple times (different domains), the most recently
-// seen entry wins.
-func buildResolverCacheMTULookup(entries []ResolverCacheEntry) map[string]ResolverCacheEntry {
-	lookup := make(map[string]ResolverCacheEntry, len(entries))
-	for _, e := range entries {
-		key := makeConnectionKey(e.IP, e.Port, e.Domain)
-		if existing, ok := lookup[key]; !ok || e.LastSeen.After(existing.LastSeen) {
-			lookup[key] = e
-		}
-	}
-	return lookup
+// BootstrapFromLogs is retained as a source-compatible entrypoint for older
+// desktop/Android wrappers. Resolver caches are intentionally ignored: hostile
+// network conditions can change between launches, so every start uses the
+// current resolver source and performs fresh authenticated MTU/path validation.
+func BootstrapFromLogs(configPath string, _ []ResolverCacheEntry, overrides config.ClientConfigOverrides) (*Client, error) {
+	return Bootstrap(configPath, overrides)
 }
 
 func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Client {

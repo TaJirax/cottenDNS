@@ -414,9 +414,9 @@ MIN_DOWNLOAD_MTU = 1000
 MAX_UPLOAD_MTU = 200
 MAX_DOWNLOAD_MTU = 4000
 
-# MTU probe retries, timeout, and parallelism.
-# Separate values are used depending on STARTUP_MODE so a fast
-# log-based startup can use lighter probes than a full resolvers scan.
+# MTU probe retries, timeout, and parallelism for the fresh resolver scan.
+# The *_LOGS values remain parseable for old configurations but are no longer
+# selected; every startup uses the *_RESOLVERS values below.
 # Retries and parallelism must be >= 1.
 MTU_TEST_RETRIES_RESOLVERS = 2
 MTU_TEST_TIMEOUT_RESOLVERS = 1.5
@@ -596,8 +596,8 @@ ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 # - Controls per-session log file creation.
 # - When LOG_TO_FILE is true, each session also writes a structured
 #   resolver_cache_<timestamp>.log file to LOG_DIR containing the working
-#   resolvers and their MTU values, which is consumed by the log-based startup
-#   path (see Section 10).
+#   resolvers and their MTU values for diagnostics only. It is never trusted for
+#   startup or used to skip fresh resolver validation.
 # ------------------------------------------------------------------------------
 
 # Typical values: DEBUG, INFO, WARN, ERROR
@@ -605,7 +605,7 @@ LOG_LEVEL = "INFO"
 
 # When true, the session log and the resolver-cache statistics log are both
 # written to LOG_DIR.  Enabled by default so that logs from each session are
-# available for review and for log-based startup (see Section 10).
+# available for review and troubleshooting.
 LOG_TO_FILE = true
 
 # Directory (relative to the config file, or absolute) where log files are stored.
@@ -622,37 +622,28 @@ LOG_FILE_NAME = "cottendns_{time}.log"
 STATS_REPORT_INTERVAL_SECONDS = 10.0
 
 # ------------------------------------------------------------------------------
-# 10) Log-Based Startup
+# 10) Fresh Resolver Startup
 # What this section does:
-# - Controls whether the app can start from previous session log files instead
-#   of running a full resolver scan, dramatically reducing startup time.
-# - The resolver cache log records every working resolver + its MTU values at
-#   the end of each successful MTU test. On subsequent launches the app can
-#   restore those values directly.
+# - Forces fresh validation of the complete resolver list on every process start.
+# - Resolver conditions, MTU, poisoning and transport reachability can change
+#   between launches on hostile networks, so old cache entries are never trusted.
 # ------------------------------------------------------------------------------
 
 # Startup mode.
-# Allowed values:
-#   "ask"       = prompt the user each time (auto-selects option 1 after 10 s)
-#   "resolvers" = always start from client_resolvers.txt (full scan, no prompt)
-#   "logs"      = always start from log files (no prompt; falls back to full
-#                 scan when no usable log entries are found)
-STARTUP_MODE = "logs"
+# "resolvers" always starts from client_resolvers.txt and performs fresh
+# authenticated resolver/transport/MTU scanning. Legacy "ask" and "logs" values
+# are accepted for config compatibility but normalize to "resolvers".
+STARTUP_MODE = "resolvers"
 
-# Maximum age (in days) of resolver cache log files that will be considered
-# during log-based startup.  0 means use all files regardless of age.
+# Legacy compatibility keys. Resolver-cache logs are diagnostic only and these
+# limits no longer affect startup.
 LOG_SCAN_MAX_DAYS = 30
 
-# Maximum number of resolvers to load from log files.
-# Resolvers are ranked by quality (appear-count × 1000 + DOWN-MTU + UP-MTU).
-# 0 means use all found resolvers.
 LOG_SCAN_MAX_RESOLVERS = 0
 
-# When true, even a log-based startup will run the full MTU scan to verify
-# that the previously-known resolvers are still reachable.
-# When false (default), MTU testing is skipped and pre-known values are used
-# directly, giving the fastest possible startup time.
-LOG_BASED_MTU_VERIFY = false
+# Legacy compatibility key. Cache-based startup is disabled, so every launch
+# performs fresh validation regardless of this value.
+LOG_BASED_MTU_VERIFY = true
 
 # ------------------------------------------------------------------------------
 

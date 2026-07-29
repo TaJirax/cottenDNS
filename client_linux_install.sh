@@ -135,12 +135,11 @@ if [[ -f "client_config.toml.backup" ]]; then
   fi
 fi
 
-# When running as a systemd service the process is non-interactive,
-# so switch the startup mode from the default "ask" to "logs" to avoid
-# waiting indefinitely for user input on every restart.
-if grep -q '^STARTUP_MODE[[:space:]]*=[[:space:]]*"ask"' client_config.toml; then
-  sed -i 's/^STARTUP_MODE[[:space:]]*=.*$/STARTUP_MODE = "logs"/' client_config.toml
-  log_info "STARTUP_MODE set to \"logs\" for non-interactive service operation."
+# Resolver conditions on hostile networks are not stable across restarts.
+# Normalize old interactive/cache modes to a fresh complete scan.
+if grep -Eq '^STARTUP_MODE[[:space:]]*=[[:space:]]*"(ask|logs)"' client_config.toml; then
+  sed -i 's/^STARTUP_MODE[[:space:]]*=.*$/STARTUP_MODE = "resolvers"/' client_config.toml
+  log_info "STARTUP_MODE set to \"resolvers\" for fresh validation on every start."
 fi
 
 log_header "Installing System Service"

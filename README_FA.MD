@@ -73,7 +73,7 @@ CottenDns یک سیستم تونل client/server است که ترافیک TCP ر
 | 📉 packet loss عادی است | ARQ window، ACK/NACK، timerهای retransmission و terminal drain |
 | 📡 resolverها کند یا از دسترس خارج می‌شوند | health check، auto-disable در runtime، recheck پس‌زمینه و stream failover |
 | ⬆️ upload معمولاً گلوگاه است | duplication جداگانه برای data، ACK، setup و control packetها |
-| 🕒 startup می‌تواند زمان‌بر باشد | resolver cache log و startup از logهای قبلی |
+| 🕒 startup می‌تواند زمان‌بر باشد | `FAST_CONNECT` با scan تازه و ادامه بررسی resolverها در background |
 | 🧪 رفتار resolverها یکسان نیست | اعتبارسنجی MTU برای هر resolver و strategyهای balancing |
 | 🧱 DPI و protocol filtering رایج است | transport فقط روی DNS query/response معمولی UDP/53 |
 
@@ -331,7 +331,7 @@ flagهای کاربردی کلاینت:
 نمونه CLI override:
 
 ```bash
-./CottenDns_Client_Linux_AMD64 --config client_config.toml --listen-port 18001 --startup-mode logs
+./CottenDns_Client_Linux_AMD64 --config client_config.toml --listen-port 18001 --startup-mode resolvers
 ```
 
 ### 🐧 نصب service کلاینت روی Linux
@@ -350,7 +350,9 @@ journalctl -u cottendns-client -f
 systemctl restart cottendns-client
 ```
 
-service کلاینت non-interactive اجرا می‌شود. اگر config هنوز `STARTUP_MODE = "ask"` داشته باشد، installer آن را به `logs` تغییر می‌دهد.
+service کلاینت non-interactive اجرا می‌شود. installer مقدارهای قدیمی `ask` یا
+`logs` را به `STARTUP_MODE = "resolvers"` تبدیل می‌کند تا در هر restart یک scan
+تازه انجام شود.
 
 <a id="configuration-overview"></a>
 
@@ -463,8 +465,9 @@ CottenDns از فایل‌های TOML استفاده می‌کند. مسیرها
 1. با sample config شروع کنید.
 2. تعداد زیادی resolver candidate داخل `client_resolvers.txt` بگذارید.
 3. برای scan کامل با `STARTUP_MODE = "resolvers"` اجرا کنید.
-4. `LOG_TO_FILE = true` را روشن نگه دارید تا نتیجه resolver/MTU ذخیره شود.
-5. بعد از scan موفق، برای startup سریع‌تر از `STARTUP_MODE = "logs"` استفاده کنید.
+4. `LOG_TO_FILE = true` را فقط برای بررسی و عیب‌یابی نگه دارید.
+5. همیشه `STARTUP_MODE = "resolvers"` را نگه دارید؛ `FAST_CONNECT` بعد از آماده
+   شدن یک pool کوچک اتصال را شروع می‌کند و scan بقیه resolverها در background ادامه دارد.
 
 ```toml
 STARTUP_MODE = "resolvers"
@@ -472,12 +475,8 @@ LOG_TO_FILE = true
 RESOLVER_BALANCING_STRATEGY = 3
 ```
 
-بعد از scan موفق:
-
-```toml
-STARTUP_MODE = "logs"
-LOG_BASED_MTU_VERIFY = true
-```
+نتیجه‌های run قبلی برای fast start استفاده نمی‌شوند، چون وضعیت resolverها،
+poisoning، transport و MTU ممکن است بین دو اجرا عوض شود.
 
 ### 📏 تنظیم بازه MTU
 
@@ -707,7 +706,9 @@ sudo systemctl restart systemd-resolved
 
 ### 🕒 startup کلاینت کند است
 
-بعد از یک full scan موفق از `STARTUP_MODE = "logs"` استفاده کنید، بازه‌های MTU را کوچک‌تر کنید، `MTU_TEST_RETRIES_RESOLVERS` را پایین بیاورید و resolverهایی را که همیشه fail می‌شوند از `client_resolvers.txt` حذف کنید.
+`STARTUP_MODE = "resolvers"` و `FAST_CONNECT = true` را نگه دارید، بازه‌های MTU
+را کوچک‌تر کنید، `MTU_TEST_RETRIES_RESOLVERS` را پایین بیاورید و resolverهایی را
+که همیشه fail می‌شوند از `client_resolvers.txt` حذف کنید.
 
 ### 🧊 تونل وصل می‌شود اما سایت‌ها stall می‌شوند
 

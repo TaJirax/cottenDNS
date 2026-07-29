@@ -1296,3 +1296,28 @@ uses comparable capacity without adding copies.
 designed to fail safe — if FEC, MTU grouping, a carrier, or a transport channel
 does not help on a given path, the tunnel still delivers through the surviving
 resolver/path combination.*
+
+## 28. Fresh resolver validation on every launch
+
+Resolver reachability, poisoning behavior, transport quality, loss, and MTU can
+change between two process launches on the target networks. Reusing a
+previous-run resolver cache could therefore start the client on paths that are
+no longer usable and could exclude newly useful resolvers.
+
+Cache-assisted startup is now disabled at every supported entrypoint:
+
+- the command-line client always bootstraps from the current resolver source;
+- default, legacy `ask`, and legacy `logs` startup values normalize to
+  `resolvers`;
+- `BootstrapFromLogs` remains source-compatible for older desktop/Android
+  wrappers but intentionally delegates to normal fresh bootstrap and ignores
+  cache entries;
+- resolver-mode MTU retry/timeout/parallelism values are always selected;
+- the Linux service installer rewrites old `ask`/`logs` values to `resolvers`;
+  and
+- resolver-cache log files remain diagnostic output only.
+
+`FAST_CONNECT` preserves good startup experience without stale state: the client
+releases a newly validated starter pool, then continues scanning the remaining
+current-list resolvers in the background at bounded parallelism. No resolver is
+accepted because it worked in a previous process.

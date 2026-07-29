@@ -354,13 +354,11 @@ For a scan without starting the local proxy:
 ./CottenDns_Client_Linux_AMD64_vVERSION --config ./client_config.toml --scan-only
 ```
 
-After one successful full scan, change:
-
-```toml
-STARTUP_MODE = "logs"
-```
-
-This reuses validated results for faster startup while background checks continue refreshing the pool.
+Keep `STARTUP_MODE = "resolvers"` on every launch. Resolver reachability,
+transport quality, poisoning, and MTU can change between restarts, so CottenDNS
+always validates the complete current list. `FAST_CONNECT = true` releases a
+small validated starter pool early and continues scanning the remaining
+resolvers in the background without trusting results from a previous process.
 
 ### Step 7 — Test the SOCKS5 proxy
 
@@ -568,7 +566,7 @@ Start with the layer that failed:
 | Server is healthy but every scan fails | A/NS delegation, provider firewall, matching domain/key |
 | Some resolvers pass and others fail | Expected resolver filtering; keep only validated paths |
 | SOCKS listener opens but browsing fails | Client logs, active streams, proxy hostname mode, server egress |
-| Starts quickly but uses stale bad paths | Run one fresh `STARTUP_MODE = "resolvers"` scan |
+| Resolver conditions changed after restart | No action: every launch performs fresh validation |
 | Fast briefly, then stalls | Queue pressure, MTU changes, loss, resolver throttling |
 
 ### No resolver passes MTU scanning
@@ -584,7 +582,7 @@ Start with the layer that failed:
 
 ### Client immediately prefers TCP
 
-Keep `RESOLVER_TRANSPORT = "auto"`. The client should retain viable UDP and move only a resolver whose UDP path fails or becomes materially worse. Delete stale resolver logs and perform one fresh scan if the environment changed significantly.
+Keep `RESOLVER_TRANSPORT = "auto"`. The client should retain viable UDP and move only a resolver whose UDP path fails or becomes materially worse. Every restart performs fresh resolver and path validation.
 
 ### Connection works but is slow
 

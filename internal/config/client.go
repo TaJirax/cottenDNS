@@ -432,7 +432,7 @@ func defaultClientConfig() ClientConfig {
 		LogDir:                               "logs",
 		LogFileName:                          "cottendns_{time}.log",
 		StatsReportIntervalSeconds:           5.0,
-		StartupMode:                          "logs",
+		StartupMode:                          "resolvers",
 		LogScanMaxDays:                       30,
 		LogScanMaxResolvers:                  0,
 		LogBasedMTUVerify:                    true,
@@ -469,24 +469,16 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 	return finalizeClientConfig(cfg)
 }
 
-// ApplyStartupModeMTU resolves the active MTU-test parameters (MTUTestRetries,
-// MTUTestTimeout, MTUTestParallelism) from the per-mode configuration values
-// based on the supplied startup mode. Any value other than "logs" is treated as
-// the resolvers mode.
-func (cfg *ClientConfig) ApplyStartupModeMTU(mode string) {
+// ApplyStartupModeMTU selects the fresh resolver-scan parameters. The mode
+// argument is retained for source compatibility; cached log startup is disabled
+// because resolver reachability and MTU are not reliable across launches.
+func (cfg *ClientConfig) ApplyStartupModeMTU(_ string) {
 	if cfg == nil {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "logs":
-		cfg.MTUTestRetries = cfg.MTUTestRetriesLogs
-		cfg.MTUTestTimeout = cfg.MTUTestTimeoutLogs
-		cfg.MTUTestParallelism = cfg.MTUTestParallelismLogs
-	default:
-		cfg.MTUTestRetries = cfg.MTUTestRetriesResolvers
-		cfg.MTUTestTimeout = cfg.MTUTestTimeoutResolvers
-		cfg.MTUTestParallelism = cfg.MTUTestParallelismResolvers
-	}
+	cfg.MTUTestRetries = cfg.MTUTestRetriesResolvers
+	cfg.MTUTestTimeout = cfg.MTUTestTimeoutResolvers
+	cfg.MTUTestParallelism = cfg.MTUTestParallelismResolvers
 }
 
 func loadClientConfigFile(filename string) (ClientConfig, error) {
@@ -545,8 +537,8 @@ func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverri
 		return cfg, err
 	}
 
-	// When explicit resolvers are provided (e.g. from log-based startup), override the
-	// file-loaded ones after finalization so the rest of the config is still validated.
+	// Explicit resolvers supplied by an embedding or CLI integration override the
+	// file-loaded list after the rest of the configuration has been validated.
 	if len(overrides.Resolvers) > 0 {
 		cfg.Resolvers = overrides.Resolvers
 		rm := make(map[string]int, len(overrides.Resolvers))
@@ -840,12 +832,12 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	}
 	cfg.StartupMode = strings.ToLower(strings.TrimSpace(cfg.StartupMode))
 	switch cfg.StartupMode {
-	case "", "ask":
-		cfg.StartupMode = "ask"
-	case "resolvers", "logs":
-		// valid
+	case "", "ask", "logs", "resolvers":
+		// "ask" and the former "logs" mode are compatibility aliases. Every
+		// launch now validates the complete current resolver environment.
+		cfg.StartupMode = "resolvers"
 	default:
-		cfg.StartupMode = "ask"
+		cfg.StartupMode = "resolvers"
 	}
 	if cfg.LogScanMaxDays < 0 {
 		cfg.LogScanMaxDays = 0
@@ -1130,7 +1122,7 @@ func (c ClientStartupPreConfig) ResolvedLogDir() string {
 // decoded. This is intentionally lenient so the startup prompt can always be shown.
 func PeekClientStartupConfig(configPath string) ClientStartupPreConfig {
 	pre := ClientStartupPreConfig{
-		StartupMode:         "ask",
+		StartupMode:         "resolvers",
 		LogDir:              "logs",
 		LogScanMaxDays:      30,
 		LogScanMaxResolvers: 0,
@@ -1147,12 +1139,10 @@ func PeekClientStartupConfig(configPath string) ClientStartupPreConfig {
 
 	pre.StartupMode = strings.ToLower(strings.TrimSpace(pre.StartupMode))
 	switch pre.StartupMode {
-	case "", "ask":
-		pre.StartupMode = "ask"
-	case "resolvers", "logs":
-		// valid
+	case "", "ask", "logs", "resolvers":
+		pre.StartupMode = "resolvers"
 	default:
-		pre.StartupMode = "ask"
+		pre.StartupMode = "resolvers"
 	}
 	if pre.LogScanMaxDays < 0 {
 		pre.LogScanMaxDays = 0

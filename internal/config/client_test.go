@@ -90,9 +90,46 @@ func TestAndroidEmbeddingDefaultsAndLimits(t *testing.T) {
 		t.Fatalf("unexpected path controller defaults: mode=%q striping=%v",
 			cfg.PathControllerMode, cfg.ComparablePathStriping)
 	}
+	if cfg.StartupMode != "resolvers" {
+		t.Fatalf("Android/engine startup mode=%q, want fresh resolver scan", cfg.StartupMode)
+	}
 
 	if cfg.LocalHandshakeTimeout() != 5*time.Second {
 		t.Fatalf("handshake duration=%v, want 5s", cfg.LocalHandshakeTimeout())
+	}
+}
+
+func TestLegacyLogStartupNormalizesToFreshResolverScan(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "client_config.toml")
+	if err := os.WriteFile(configPath, []byte(`
+DOMAINS = ["v.example.com"]
+ENCRYPTION_KEY = "secret"
+STARTUP_MODE = "logs"
+MTU_TEST_RETRIES_RESOLVERS = 2
+MTU_TEST_TIMEOUT_RESOLVERS = 1.5
+MTU_TEST_PARALLELISM_RESOLVERS = 7
+MTU_TEST_RETRIES_LOGS = 9
+MTU_TEST_TIMEOUT_LOGS = 9
+MTU_TEST_PARALLELISM_LOGS = 9
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "client_resolvers.txt"), []byte("1.1.1.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadClientConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StartupMode != "resolvers" {
+		t.Fatalf("legacy startup mode normalized to %q, want resolvers", cfg.StartupMode)
+	}
+	cfg.ApplyStartupModeMTU("logs")
+	if cfg.MTUTestRetries != 2 || cfg.MTUTestTimeout != 1.5 || cfg.MTUTestParallelism != 7 {
+		t.Fatalf("legacy log mode selected cached-scan parameters: retries=%d timeout=%v parallelism=%d",
+			cfg.MTUTestRetries, cfg.MTUTestTimeout, cfg.MTUTestParallelism)
 	}
 }
 

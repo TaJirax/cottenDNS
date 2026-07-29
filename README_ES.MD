@@ -259,7 +259,11 @@ Windows PowerShell:
 
 El cliente medirá conectividad real del túnel, MTU, latencia, pérdida y rutas UDP/TCP por resolver. Para escanear sin iniciar el proxy, añade `--scan-only`.
 
-Después de un escaneo completo exitoso, cambia `STARTUP_MODE` a `"logs"` para reutilizar resultados validados mientras las comprobaciones en segundo plano mantienen actualizado el pool.
+Mantén `STARTUP_MODE = "resolvers"` en cada inicio. La conectividad, el
+envenenamiento, el transporte y el MTU pueden cambiar entre reinicios.
+`FAST_CONNECT = true` permite conectar cuando existe un pequeño pool recién
+validado y continúa comprobando los demás resolvers en segundo plano sin confiar
+en una caché de procesos anteriores.
 
 ### Paso 6 — Prueba SOCKS5
 
