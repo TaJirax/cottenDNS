@@ -228,8 +228,17 @@ func writeTCPDNSFramed(conn net.Conn, msg []byte) error {
 	framed := make([]byte, 2+len(msg))
 	binary.BigEndian.PutUint16(framed[:2], uint16(len(msg)))
 	copy(framed[2:], msg)
-	_, err := conn.Write(framed)
-	return err
+	for len(framed) > 0 {
+		n, err := conn.Write(framed)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		framed = framed[n:]
+	}
+	return nil
 }
 
 // readTCPDNSFramed reads one length-prefixed DNS message.

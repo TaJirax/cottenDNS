@@ -1321,3 +1321,36 @@ Cache-assisted startup is now disabled at every supported entrypoint:
 releases a newly validated starter pool, then continues scanning the remaining
 current-list resolvers in the background at bounded parallelism. No resolver is
 accepted because it worked in a previous process.
+
+## 29. Sustained DNS-over-TCP flow control
+
+Small interactive exchanges could succeed over TCP/53 while sustained media
+traffic filled the fixed stream-transport queue. The old non-blocking admission
+path then discarded newly encoded frames, leaving ARQ to recover them later.
+Combined with unrestricted DNS pipelining and TCP head-of-line blocking, this
+could turn a temporary resolver slowdown into a retransmission loop.
+
+The TCP/53 and DoT data manager now applies lossless backpressure:
+
+- a full stream queue pauses upstream writers instead of dropping fresh frames;
+- each persistent connection permits at most 32 unanswered DNS queries;
+- the historical two connection stripes remain the clean-path baseline;
+- queue pressure raises the stripe count gradually to four, six, and at most
+  eight, returning to the two-stripe decision when pressure clears;
+- a connection with no response progress is closed so blocked senders wake and
+  the existing bounded cross-path replay can recover; and
+- DNS-over-TCP framing completes partial socket writes instead of assuming one
+  `Write` call consumed the complete message.
+
+The server now handles up to 32 pipelined queries concurrently per TCP/DoT
+connection. Response writes remain serialized at DNS-message boundaries, and
+the existing global/per-IP connection budgets still bound overload. No native
+packet, encryption, session, carrier, or legacy wire format changed.
+
+Focused tests cover queue backpressure, shutdown cancellation, inflight-window
+release, pressure-based stripe scaling, partial writes, and concurrent
+server-side pipelining. The full repository tests, `go vet`, native
+client/server builds, and Android engine cross-builds for arm64, armv7, amd64,
+and 386 pass with CGO disabled. Windows race execution was unavailable on this
+workstation because its configured MinGW compiler path no longer exists; the
+CI release matrix remains the authoritative clean-environment build check.

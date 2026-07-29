@@ -28,12 +28,15 @@ import (
 )
 
 const (
-	tcpDataDialTimeout  = 4 * time.Second
-	tcpDataWriteTimeout = 10 * time.Second
-	tcpDataWorkers      = 8
-	tcpDataStripes      = 2
-	tcpDataQueueCap     = 256
-	tcpControlQueueCap  = 64
+	tcpDataDialTimeout         = 4 * time.Second
+	tcpDataWriteTimeout        = 10 * time.Second
+	tcpDataResponseIdleTimeout = 15 * time.Second
+	tcpDataWorkers             = 8
+	tcpDataBaseStripes         = 2
+	tcpDataMaxStripes          = 8
+	tcpDataMaxInflightPerConn  = 32
+	tcpDataQueueCap            = 256
+	tcpControlQueueCap         = 64
 )
 
 // streamDataTransport is the data-plane contract shared by every persistent
@@ -77,8 +80,11 @@ type tcpDataConn struct {
 	resolverAddr *net.UDPAddr
 	localAddr    string
 
-	writeMu sync.Mutex
-	conn    net.Conn
+	writeMu   sync.Mutex
+	conn      net.Conn
+	inflight  chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func newTCPDataManager(c *Client) *tcpDataManager {
@@ -155,6 +161,7 @@ func (m *tcpDataManager) Send(frame encodedOutboundDatagram, now time.Time) bool
 	}
 	m.mu.Lock()
 	dead := m.dead
+	ctx := m.ctx
 	m.mu.Unlock()
 	if dead {
 		return false
@@ -166,12 +173,37 @@ func (m *tcpDataManager) Send(frame encodedOutboundDatagram, now time.Time) bool
 	if frame.priority <= Enums.PacketPriorityHigh {
 		queue = m.controlQ
 	}
+	var done <-chan struct{}
+	if ctx != nil {
+		done = ctx.Done()
+	}
 	select {
 	case queue <- job:
 		return true
-	default:
-		m.client.txAdmissionDrops.Add(1)
+	case <-done:
 		return false
+	}
+}
+
+// desiredStripeCount grows connection parallelism only after the stream queue
+// demonstrates sustained pressure. Healthy/light traffic keeps the historical
+// two connections; bulk transfers can add stripes to avoid TCP head-of-line
+// blocking without making idle clients consume extra resolver/server sockets.
+func (m *tcpDataManager) desiredStripeCount() int {
+	if m == nil {
+		return tcpDataBaseStripes
+	}
+	queued := len(m.dataQ)
+	capacity := cap(m.dataQ)
+	switch {
+	case capacity > 0 && queued >= capacity*3/4:
+		return tcpDataMaxStripes
+	case capacity > 0 && queued >= capacity/2:
+		return 6
+	case capacity > 0 && queued >= capacity/4:
+		return 4
+	default:
+		return tcpDataBaseStripes
 	}
 }
 
@@ -201,7 +233,7 @@ func (m *tcpDataManager) sendJob(job tcpDataJob) {
 	if m.client.resolverReplayCompleted(job.frame, time.Now()) {
 		return
 	}
-	slot := int(m.next.Add(1)-1) % tcpDataStripes
+	slot := int(m.next.Add(1)-1) % m.desiredStripeCount()
 	dc, err := m.connFor(job.frame.addr, slot)
 	if err != nil || dc == nil {
 		m.client.streamDialFailures.Add(1)
@@ -211,12 +243,17 @@ func (m *tcpDataManager) sendJob(job tcpDataJob) {
 		return
 	}
 
+	if !dc.acquire(m.ctx) {
+		m.client.replayRuntimeFrame(job.frame, m.kind, nil, "", failureReplayMaxDepth)
+		return
+	}
 	dc.writeMu.Lock()
 	_ = dc.conn.SetWriteDeadline(time.Now().Add(tcpDataWriteTimeout))
 	werr := writeTCPDNSFramed(dc.conn, job.frame.packet)
 	dc.writeMu.Unlock()
 
 	if werr != nil {
+		dc.release()
 		m.client.streamWriteFailures.Add(1)
 		m.client.recordResolverHealthEvent(job.frame.serverKey, false, job.now)
 		m.client.noteResolverTransportFailureForPacket(job.frame.serverKey, m.kind, job.frame.packetType, job.now)
@@ -257,6 +294,8 @@ func (m *tcpDataManager) connFor(addr *net.UDPAddr, slot int) (*tcpDataConn, err
 		key:          key,
 		resolverAddr: addr,
 		conn:         conn,
+		inflight:     make(chan struct{}, tcpDataMaxInflightPerConn),
+		closed:       make(chan struct{}),
 	}
 	if la := conn.LocalAddr(); la != nil {
 		dc.localAddr = la.String()
@@ -297,7 +336,38 @@ func (dc *tcpDataConn) close() {
 	if dc == nil || dc.conn == nil {
 		return
 	}
-	_ = dc.conn.Close()
+	dc.closeOnce.Do(func() {
+		close(dc.closed)
+		_ = dc.conn.Close()
+	})
+}
+
+func (dc *tcpDataConn) acquire(ctx context.Context) bool {
+	if dc == nil {
+		return false
+	}
+	var done <-chan struct{}
+	if ctx != nil {
+		done = ctx.Done()
+	}
+	select {
+	case dc.inflight <- struct{}{}:
+		return true
+	case <-dc.closed:
+		return false
+	case <-done:
+		return false
+	}
+}
+
+func (dc *tcpDataConn) release() {
+	if dc == nil {
+		return
+	}
+	select {
+	case <-dc.inflight:
+	default:
+	}
 }
 
 // readLoop reads length-prefixed DNS responses and feeds them into the client's
@@ -314,6 +384,7 @@ func (dc *tcpDataConn) readLoop(ctx context.Context) {
 		if ctx != nil && ctx.Err() != nil {
 			return
 		}
+		_ = dc.conn.SetReadDeadline(time.Now().Add(tcpDataResponseIdleTimeout))
 		if _, err := io.ReadFull(dc.conn, lenBuf[:]); err != nil {
 			return
 		}
@@ -327,6 +398,10 @@ func (dc *tcpDataConn) readLoop(ctx context.Context) {
 			dc.manager.client.putRuntimeUDPBuffer(buf)
 			return
 		}
+		// Each framed DNS answer releases one pipelining slot. This bounds the
+		// number of requests a resolver can hold and propagates pressure back to
+		// the stream/ARQ queues instead of dropping fresh media frames.
+		dc.release()
 
 		// Only DNS responses (QR=1) are of interest, mirroring the UDP reader.
 		if (buf[2] & 0x80) == 0 {
