@@ -253,11 +253,18 @@ func (c *Client) runResolverTransportBackgroundScan(ctx context.Context, now tim
 		return
 	}
 	c.resolverTransportMu.Lock()
-	c.resolverTransportStateLocked(selected.Key).lastBackgroundScan = now
+	selectedState := c.resolverTransportStateLocked(selected.Key)
+	selectedState.lastBackgroundScan = now
+	selectedState.backgroundProbeActive = true
 	c.resolverTransportMu.Unlock()
 
 	go func(conn Connection) {
 		defer c.releaseResolverRecheckSlot()
+		defer func() {
+			c.resolverTransportMu.Lock()
+			c.resolverTransportStateLocked(conn.Key).backgroundProbeActive = false
+			c.resolverTransportMu.Unlock()
+		}()
 		c.refreshResolverTransportPath(ctx, &conn)
 	}(selected)
 }

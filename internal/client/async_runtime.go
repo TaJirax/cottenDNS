@@ -310,6 +310,8 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 	c.warmPathBudgetSends.Store(0)
 	c.warmPathLastScanUnix.Store(c.now().UnixNano())
 	c.transportExploreBudgetSends.Store(0)
+	c.transportRestoreBudgetSends.Store(0)
+	c.transportRestoreCursor.Store(0)
 	c.pathStripeCursor.Store(0)
 	c.pathStripeCount.Store(0)
 	c.pathRedundancySuppressed.Store(0)

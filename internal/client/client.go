@@ -193,6 +193,13 @@ type Client struct {
 	// fleet. Counters are local observability only and add no network traffic.
 	transportExploreBudgetSends atomic.Uint64
 	transportExplorationCount   atomic.Uint64
+	// Availability restoration is distinct from healthy path exploration. It
+	// uses sparse authenticated foreground races to revisit configured-first
+	// transports that were demoted after a failure, even while the tunnel is
+	// continuously busy and the full MTU sweep correctly stays idle.
+	transportRestoreBudgetSends atomic.Uint64
+	transportRestoreCursor      atomic.Uint64
+	transportRestoreCount       atomic.Uint64
 	transportSwitchCount        atomic.Uint64
 	pathStripeCursor            atomic.Uint64
 	pathStripeCount             atomic.Uint64

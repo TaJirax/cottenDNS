@@ -760,3 +760,100 @@ func TestMTUBackgroundParallelismDefaultAndClamp(t *testing.T) {
 		}
 	}
 }
+
+// The UDP-only preset must pin the data plane to UDP and inherit the speed
+// profile's throughput settings, including from the bundled preset file that
+// desktop and the Android engine both load.
+func TestUDPOnlyPreset(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "client_config.toml")
+	resolversPath := filepath.Join(dir, "client_resolvers.txt")
+	if err := os.WriteFile(configPath, []byte(`
+CONFIG_PRESET = "udp-only"
+DOMAINS = ["v.domain.com"]
+ENCRYPTION_KEY = "secret"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(resolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile resolvers failed: %v", err)
+	}
+
+	cfg, err := LoadClientConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadClientConfig returned error: %v", err)
+	}
+	if cfg.ConfigPreset != "udp-only" || cfg.ResolverTransport != "udp" {
+		t.Fatalf("preset=%q transport=%q, want udp-only/udp", cfg.ConfigPreset, cfg.ResolverTransport)
+	}
+	if cfg.MTUMaxLoss != 0.25 {
+		t.Fatalf("udp-only MTU loss budget=%v, want one tolerated miss in four samples", cfg.MTUMaxLoss)
+	}
+	if len(cfg.QueryTypes) != 1 || cfg.QueryTypes[0] != "TXT" {
+		t.Fatalf("udp-only query types=%+v, want TXT only", cfg.QueryTypes)
+	}
+	if cfg.ARQWindowSize != 1500 || cfg.MaxPacketsPerBatch != 12 {
+		t.Fatalf("udp-only did not inherit the speed profile: window=%d batch=%d",
+			cfg.ARQWindowSize, cfg.MaxPacketsPerBatch)
+	}
+	if cfg.PingWatchdogTimeoutSeconds != 45.0 {
+		t.Fatalf("watchdog=%v, want 45s", cfg.PingWatchdogTimeoutSeconds)
+	}
+
+	// The UDP pin survives a config that also emits RESOLVER_TRANSPORT and
+	// per-resolver transport paths — the shape an embedding that renders a
+	// complete TOML (the Android app) produces on every write.
+	if err := os.WriteFile(configPath, []byte(`
+CONFIG_PRESET = "udp-only"
+RESOLVER_TRANSPORT = "auto"
+RESOLVER_TRANSPORT_PATHS = { "1.1.1.1" = "tcp", "8.8.8.8" = "udp" }
+DOMAINS = ["v.domain.com"]
+ENCRYPTION_KEY = "secret"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if cfg, err = LoadClientConfig(configPath); err != nil {
+		t.Fatalf("LoadClientConfig returned error: %v", err)
+	}
+	if cfg.ResolverTransport != "udp" {
+		t.Fatalf("rendered RESOLVER_TRANSPORT defeated the udp-only pin, got %q", cfg.ResolverTransport)
+	}
+	if _, ok := cfg.ResolverTransportPaths["1.1.1.1"]; ok {
+		t.Fatal("per-resolver TCP override survived the udp-only pin")
+	}
+	if cfg.ResolverTransportPaths["8.8.8.8"] != "udp" {
+		t.Fatalf("per-resolver UDP entry should be kept, got %+v", cfg.ResolverTransportPaths)
+	}
+
+	// The same must hold through the embedding path, where the preset arrives as
+	// an override value rather than a file key.
+	cfg, err = LoadClientConfigWithOverrides(configPath, ClientConfigOverrides{
+		Values: map[string]any{"ConfigPreset": "udp-only"},
+	})
+	if err != nil {
+		t.Fatalf("LoadClientConfigWithOverrides returned error: %v", err)
+	}
+	if cfg.ConfigPreset != "udp-only" || cfg.ResolverTransport != "udp" {
+		t.Fatalf("embedding path: preset=%q transport=%q", cfg.ConfigPreset, cfg.ResolverTransport)
+	}
+}
+
+func TestBundledUDPOnlyPresetFileLoads(t *testing.T) {
+	resolverPath, err := filepath.Abs(filepath.Join("..", "..", "client_resolvers.simple"))
+	if err != nil {
+		t.Fatalf("resolve bundled resolver sample: %v", err)
+	}
+	cfg, err := LoadClientConfigWithOverrides(
+		filepath.Join("..", "..", "client_config.udp-only.toml"),
+		ClientConfigOverrides{
+			ResolversFilePath: &resolverPath,
+			Values:            map[string]any{"EncryptionKey": "preset-test-key"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("LoadClientConfig(client_config.udp-only.toml): %v", err)
+	}
+	if cfg.ConfigPreset != "udp-only" || cfg.ResolverTransport != "udp" {
+		t.Fatalf("bundled udp-only preset=%q transport=%q", cfg.ConfigPreset, cfg.ResolverTransport)
+	}
+}

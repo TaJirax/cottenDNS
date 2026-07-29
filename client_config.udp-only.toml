@@ -1,0 +1,10 @@
+# CottenDNS speed profile pinned to plain UDP/53.
+# No TCP, DoT or DoH candidate is probed or raced, so nothing can move the data
+# plane off UDP. Use where UDP/53 is known to reach the resolvers: it removes
+# every alternate-transport probe and the background transport sweep.
+# If UDP is blocked or heavily truncated on your network, use "speed" (UDP-first
+# with TCP fallback) or "tcp-survival" instead.
+
+CONFIG_PRESET = "udp-only"
+DOMAINS = ["REPLACE_WITH_YOUR_DELEGATED_DOMAIN"]
+ENCRYPTION_KEY = ""

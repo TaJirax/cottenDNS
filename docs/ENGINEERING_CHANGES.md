@@ -1354,3 +1354,35 @@ client/server builds, and Android engine cross-builds for arm64, armv7, amd64,
 and 386 pass with CGO disabled. Windows race execution was unavailable on this
 workstation because its configured MinGW compiler path no longer exists; the
 CI release matrix remains the authoritative clean-environment build check.
+
+## 30. Busy-tunnel UDP restoration
+
+An availability failure could demote a resolver from configured-first UDP to
+TCP, after which the resolver could remain on TCP for the whole session. The
+full background MTU sweep correctly yields whenever foreground traffic is
+active, while ordinary healthy exploration rejects a path already marked
+non-viable. Reducing the generic 1/1024 exploration interval alone therefore
+could not repair the ratchet.
+
+Availability restoration now has a separate authenticated foreground channel:
+
+- one restoration ticket accrues per 64 original DNS frames (at most 1.5625%
+  additional queries in a single-copy configuration);
+- when duplication already exists, one duplicate is replaced by the canary, so
+  the query count does not increase;
+- only control/setup frames are eligible, and existing FEC or another hedge
+  prevents stacking;
+- restoration remains active under ordinary sustained load but stops at 75%
+  queue occupancy;
+- failed/non-viable configured-first paths are eligible, which is essential
+  after a startup UDP miss;
+- two authenticated configured-first wins are required, a failure resets the
+  evidence, and the ten-second speed-switch cooldown prevents flapping; and
+- full idle MTU discovery remains available for exact path remeasurement.
+
+A deterministic 48-resolver sustained-load test restores the complete fleet
+from TCP to UDP in 6,144 foreground frames using 96 authenticated canaries. The
+measured worst-case query ratio is 96/6,144 = 1.5625%; the duplicated-path test
+keeps three configured copies at exactly three while substituting one UDP
+canary. Moderate 25% queue occupancy still permits restoration, while 75%
+occupancy suppresses it. Focused and complete client tests pass.

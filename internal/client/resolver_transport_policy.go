@@ -21,6 +21,11 @@ const (
 	transportPoisonMemory               = 2 * time.Minute
 	transportTruncationThreshold        = 3
 	transportForegroundFramesPerExplore = uint64(1024)
+	// One restoration race per 64 original DNS frames is a worst-case 1.56%
+	// query budget when no existing duplicate can be reused. With normal
+	// duplication the canary replaces one copy and costs no additional query.
+	transportRestoreFramesPerExplore = uint64(64)
+	transportRestoreSuccessThreshold = uint8(2)
 )
 
 type resolverPathScore struct {
@@ -58,13 +63,22 @@ type resolverPathScore struct {
 }
 
 type resolverTransportState struct {
-	preferred          resolverTransport
-	paths              [4]resolverPathScore
-	lastProbe          time.Time
-	lastSwitch         time.Time
-	lastBackgroundScan time.Time
-	probeCursor        int
-	backgroundCursor   int
+	preferred             resolverTransport
+	paths                 [4]resolverPathScore
+	lastProbe             time.Time
+	lastSwitch            time.Time
+	lastBackgroundScan    time.Time
+	probeCursor           int
+	backgroundCursor      int
+	backgroundProbeActive bool
+	// availabilityDemoted marks a preferred-transport change that was forced by
+	// the configured-first path measuring unusable, not earned on speed. Only
+	// such a demotion may be reversed by later probe evidence.
+	availabilityDemoted bool
+	// restoreSuccesses counts authenticated configured-first wins while an
+	// availability demotion is active. Two wins avoid restoring on one lucky
+	// packet; a failure resets the evidence.
+	restoreSuccesses uint8
 }
 
 type resolverTransportDecision struct {
@@ -416,6 +430,95 @@ func (c *Client) healthyExplorationAvailableLocked(state *resolverTransportState
 	return true
 }
 
+// runtimeQueuesSeverelyCongested keeps restoration available during sustained
+// foreground traffic while still refusing to add work near queue exhaustion.
+// Ordinary healthy exploration remains more conservative at 25% occupancy.
+func (c *Client) runtimeQueuesSeverelyCongested() bool {
+	if c == nil {
+		return true
+	}
+	severe := func(length, capacity int) bool {
+		return capacity > 0 && length*4 >= capacity*3
+	}
+	if severe(len(c.txChannel), cap(c.txChannel)) ||
+		severe(len(c.encodedTXChannel), cap(c.encodedTXChannel)) ||
+		severe(len(c.rxChannel), cap(c.rxChannel)) {
+		return true
+	}
+	c.resolverStatsMu.RLock()
+	pending := len(c.resolverPending)
+	c.resolverStatsMu.RUnlock()
+	return pending*4 >= resolverPendingSoftCap*3
+}
+
+// availabilityRestorePath selects one configured-first transport that was
+// demoted for availability. Unlike healthy exploration, it deliberately allows
+// a previously failed/non-viable path: otherwise only the idle full-MTU sweep
+// could ever prove that path recovered. The returned path carries an existing
+// authenticated control frame, so poison cannot manufacture recovery evidence.
+func (c *Client) availabilityRestorePath(packetType uint8, now time.Time) (resolverRuntimePath, bool) {
+	if c == nil || Enums.DefaultPacketPriority(packetType) > Enums.PacketPriorityHigh ||
+		c.runtimeQueuesSeverelyCongested() {
+		return resolverRuntimePath{}, false
+	}
+	foreground := c.runtimeOriginalSends.Load()
+	chargedThrough := c.transportRestoreBudgetSends.Load()
+	if foreground < chargedThrough+transportRestoreFramesPerExplore {
+		return resolverRuntimePath{}, false
+	}
+	// Reserve the global ticket before scanning. This both prevents concurrent
+	// dispatchers from multiplying the budget and charges a no-op scan when the
+	// fleet has nothing to restore, so healthy traffic does not rescan every
+	// control frame after the first 64 sends.
+	if !c.transportRestoreBudgetSends.CompareAndSwap(chargedThrough, foreground) {
+		return resolverRuntimePath{}, false
+	}
+
+	connections := c.connections
+	if c.balancer != nil {
+		connections = c.balancer.AllValidConnectionsIncludingBackup()
+	}
+	if len(connections) == 0 {
+		return resolverRuntimePath{}, false
+	}
+	eligible := make([]Connection, 0, len(connections))
+	for _, conn := range connections {
+		if conn.IsValid && conn.Key != "" && !c.isRuntimeDisabledResolver(conn.Key) {
+			eligible = append(eligible, conn)
+		}
+	}
+	if len(eligible) == 0 {
+		return resolverRuntimePath{}, false
+	}
+
+	c.resolverTransportMu.Lock()
+	defer c.resolverTransportMu.Unlock()
+	start := int(c.transportRestoreCursor.Load() % uint64(len(eligible)))
+	for offset := 0; offset < len(eligible); offset++ {
+		index := (start + offset) % len(eligible)
+		conn := eligible[index]
+		state := c.resolverTransportStateLocked(conn.Key)
+		candidates := c.resolverTransportCandidates(conn.Key)
+		if !state.availabilityDemoted || state.backgroundProbeActive || len(candidates) < 2 ||
+			state.preferred == candidates[0] ||
+			now.Sub(state.lastSwitch) < transportSwitchCooldown ||
+			(!state.lastProbe.IsZero() && now.Sub(state.lastProbe) < transportProbeInterval) {
+			continue
+		}
+
+		state.lastProbe = now
+		c.transportRestoreCursor.Store(uint64(index + 1))
+		c.transportRestoreCount.Add(1)
+		return resolverRuntimePath{
+			connection: conn,
+			transport:  candidates[0],
+			score:      fallbackConnectionPathScore(conn, packetType),
+			hedge:      true,
+		}, true
+	}
+	return resolverRuntimePath{}, false
+}
+
 func fallbackConnectionPathScore(conn Connection, packetType uint8) float64 {
 	mtu, loss := conn.UploadMTUBytes, conn.UploadMTULoss
 	switch packetType {
@@ -764,6 +867,30 @@ func (c *Client) selectJointRuntimePathsControlled(
 		}
 		c.resolverTransportMu.Unlock()
 	}
+
+	// A failed startup/configured-first path cannot pass pathSupportsPacket, and
+	// the full MTU sweep intentionally waits for idle. Use a sparse real-traffic
+	// canary so continuous transfers can still restore UDP. Reuse the last
+	// duplicate when possible (zero extra queries); only a single-copy control
+	// frame receives one bounded additional sibling.
+	if !control.fecActive {
+		hasHedge := false
+		for _, path := range selected {
+			if path.hedge {
+				hasHedge = true
+				break
+			}
+		}
+		if !hasHedge {
+			if restore, ok := c.availabilityRestorePath(packetType, now); ok {
+				if len(selected) > 1 {
+					selected[len(selected)-1] = restore
+				} else if len(selected) == 1 {
+					selected = append(selected, restore)
+				}
+			}
+		}
+	}
 	return selected
 }
 
@@ -852,8 +979,19 @@ func (c *Client) chooseResolverTransport(serverKey string, priority int, now tim
 		best := c.bestResolverTransportLocked(serverKey, state)
 		if best != state.preferred &&
 			(!current.viable || now.Sub(state.lastSwitch) >= transportSwitchCooldown) {
+			previous := state.preferred
 			state.preferred = best
 			state.lastSwitch = now
+			if len(candidates) > 0 {
+				switch {
+				case best == candidates[0]:
+					state.availabilityDemoted = false
+					state.restoreSuccesses = 0
+				case previous == candidates[0]:
+					state.availabilityDemoted = true
+					state.restoreSuccesses = 0
+				}
+			}
 			c.transportSwitchCount.Add(1)
 		}
 	}
@@ -948,12 +1086,43 @@ func (c *Client) noteResolverTransportProbe(
 	// must give its first candidate (UDP) real traffic before a faster TCP probe
 	// can displace it. Move only when the current preferred path was measured
 	// unusable; runtime samples or explicit failures handle later promotions.
+	candidates := c.resolverTransportCandidates(serverKey)
 	current := pathScoreFor(state, state.preferred)
-	if !c.pathSupportsSession(current) {
+	switch {
+	case !c.pathSupportsSession(current):
 		best := c.bestResolverTransportLocked(serverKey, state)
 		if best != state.preferred {
+			previous := state.preferred
 			state.preferred = best
 			state.lastSwitch = now
+			if len(candidates) > 0 {
+				switch {
+				case best == candidates[0]:
+					state.availabilityDemoted = false
+					state.restoreSuccesses = 0
+				case previous == candidates[0]:
+					state.availabilityDemoted = true
+					state.restoreSuccesses = 0
+				}
+			}
+			c.transportSwitchCount.Add(1)
+		}
+	case state.availabilityDemoted && len(candidates) > 0 && state.preferred != candidates[0]:
+		// Demotion costs one failed probe; without this, restoration was
+		// impossible. Speed promotion is the only other route back, and it
+		// requires runtime successes on the challenger — which a path that
+		// carries no traffic can never accumulate. So a single transient UDP
+		// probe loss moved a resolver to TCP permanently, even though the
+		// background sweep keeps proving UDP viable again. Availability-driven
+		// demotions are now reversed by availability-driven evidence; a
+		// promotion earned on measured speed is left alone.
+		if first := pathScoreFor(state, candidates[0]); first.probed && first.viable &&
+			c.pathSupportsSession(first) &&
+			now.Sub(state.lastSwitch) >= transportSwitchCooldown {
+			state.preferred = candidates[0]
+			state.lastSwitch = now
+			state.availabilityDemoted = false
+			state.restoreSuccesses = 0
 			c.transportSwitchCount.Add(1)
 		}
 	}
@@ -1016,6 +1185,23 @@ func (c *Client) noteResolverTransportSuccessClass(
 	score.lastSuccess = now
 	updatePathRTT(score, rtt)
 
+	candidates := c.resolverTransportCandidates(serverKey)
+	if state.availabilityDemoted && len(candidates) > 0 &&
+		state.preferred != candidates[0] && transport == candidates[0] {
+		if state.restoreSuccesses < 255 {
+			state.restoreSuccesses++
+		}
+		if state.restoreSuccesses >= transportRestoreSuccessThreshold &&
+			now.Sub(state.lastSwitch) >= transportSpeedSwitchCooldown {
+			state.preferred = candidates[0]
+			state.lastSwitch = now
+			state.availabilityDemoted = false
+			state.restoreSuccesses = 0
+			c.transportSwitchCount.Add(1)
+			return
+		}
+	}
+
 	// Preferred-path replies normally add telemetry only. Reconsider promotion
 	// when a challenger delivers new evidence, or exactly when the preferred
 	// path first becomes comparable. This keeps fleet-wide scoring out of the
@@ -1064,6 +1250,10 @@ func (c *Client) noteResolverTransportSuccessClass(
 	if best != state.preferred {
 		state.preferred = best
 		state.lastSwitch = now
+		// Earned on measured speed in both directions: probe evidence must not
+		// pull it back to the configured-first transport.
+		state.availabilityDemoted = false
+		state.restoreSuccesses = 0
 		c.transportSwitchCount.Add(1)
 	}
 }
@@ -1098,6 +1288,10 @@ func (c *Client) noteResolverTransportFailureClass(
 	score.failures++
 	noteRuntimeDeliveryForPacket(score, false, packetType, bidirectional)
 	score.lastFailure = now
+	candidates := c.resolverTransportCandidates(serverKey)
+	if state.availabilityDemoted && len(candidates) > 0 && transport == candidates[0] {
+		state.restoreSuccesses = 0
+	}
 	if score.failureStreak < 255 {
 		score.failureStreak++
 	}
@@ -1144,6 +1338,10 @@ func (c *Client) noteResolverTransportFailureClass(
 	if best != transport && c.pathSupportsSession(pathScoreFor(state, best)) {
 		state.preferred = best
 		state.lastSwitch = now
+		if len(candidates) > 0 && transport == candidates[0] {
+			state.availabilityDemoted = true
+			state.restoreSuccesses = 0
+		}
 		c.transportSwitchCount.Add(1)
 	}
 }
@@ -1178,6 +1376,11 @@ func (c *Client) noteResolverTransportTruncation(serverKey string, transport res
 			state.preferred = candidate
 			state.lastSwitch = now
 			state.lastProbe = time.Time{}
+			candidates := c.resolverTransportCandidates(serverKey)
+			if len(candidates) > 0 && transport == candidates[0] {
+				state.availabilityDemoted = true
+				state.restoreSuccesses = 0
+			}
 			c.transportSwitchCount.Add(1)
 			return
 		}

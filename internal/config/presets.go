@@ -24,12 +24,12 @@ func normalizeConfigPresetName(name string) string {
 	}
 }
 
-const clientConfigPresetNames = "default, speed, survival, tcp-survival, iran, china, russia, venezuela, cuba, low-bandwidth"
+const clientConfigPresetNames = "default, speed, udp-only, survival, tcp-survival, iran, china, russia, venezuela, cuba, low-bandwidth"
 const serverConfigPresetNames = "default, speed, survival, tcp-survival"
 
 func isKnownClientConfigPreset(name string) bool {
 	switch normalizeConfigPresetName(name) {
-	case "default", "speed", "survival", "tcp-survival",
+	case "default", "speed", "udp-only", "survival", "tcp-survival",
 		"iran", "china", "russia", "venezuela", "cuba", "low-bandwidth":
 		return true
 	default:
@@ -78,6 +78,8 @@ func applyClientConfigPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) 
 	switch preset {
 	case "speed":
 		applyClientSpeedPreset(cfg, isDefined)
+	case "udp-only":
+		applyClientUDPOnlyPreset(cfg, isDefined)
 	case "survival":
 		applyClientSurvivalPreset(cfg, isDefined)
 	case "tcp-survival":
@@ -146,6 +148,9 @@ func applyClientSpeedPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
 	setClientBool(isDefined, "ADAPTIVE_DUPLICATION", &cfg.AdaptiveDuplication, true)
 	setClientFloat(isDefined, "ADAPTIVE_DUPLICATION_TARGET_DELIVERY", &cfg.AdaptiveDuplicationTargetDelivery, 0.95)
 	setClientInt(isDefined, "MTU_PROBE_SAMPLES", &cfg.MTUProbeSamples, 4)
+	// One tolerated miss across four samples avoids rejecting otherwise-fast UDP
+	// after a transient loss. Runtime delivery scoring still deprioritizes a path
+	// that remains lossy, while the restoration channel can revisit it later.
 	setClientFloat(isDefined, "MTU_MAX_LOSS", &cfg.MTUMaxLoss, 0.25)
 	setClientBool(isDefined, "MTU_ADAPTIVE_GROUPING", &cfg.MTUAdaptiveGrouping, true)
 	setClientInt(isDefined, "MTU_TEST_RETRIES_RESOLVERS", &cfg.MTUTestRetriesResolvers, 2)
@@ -159,7 +164,11 @@ func applyClientSpeedPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
 	// yield exactly one session. This matches the parallelism this preset
 	// already leans on elsewhere, and costs a few extra queries once, at connect.
 	setClientInt(isDefined, "SESSION_INIT_RACING_COUNT", &cfg.SessionInitRacingCount, 5)
-	setClientFloat(isDefined, "PING_WATCHDOG_TIMEOUT_SECONDS", &cfg.PingWatchdogTimeoutSeconds, 20.0)
+	// The watchdog escalates into transport recovery, which can re-probe the
+	// fleet. Mobile networks routinely go quiet for tens of seconds; a trigger
+	// this side of a minute turns a hiccup into a re-scan that costs far more
+	// throughput than it recovers.
+	setClientFloat(isDefined, "PING_WATCHDOG_TIMEOUT_SECONDS", &cfg.PingWatchdogTimeoutSeconds, 45.0)
 	setClientInt(isDefined, "MAX_PACKETS_PER_BATCH", &cfg.MaxPacketsPerBatch, 12)
 	setClientInt(isDefined, "ARQ_WINDOW_SIZE", &cfg.ARQWindowSize, 1500)
 	setClientFloat(isDefined, "ARQ_INITIAL_RTO_SECONDS", &cfg.ARQInitialRTOSeconds, 0.45)
@@ -171,7 +180,38 @@ func applyClientSpeedPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
 	setClientInt(isDefined, "COMPRESSION_MIN_SIZE", &cfg.CompressionMinSize, 180)
 	setClientInt(isDefined, "QNAME_LABEL_LENGTH", &cfg.QNameLabelLength, 63)
 	setClientInt(isDefined, "EDNS_UDP_SIZE", &cfg.EDNSUDPSize, 4096)
-	setClientStrings(isDefined, "QUERY_TYPES", &cfg.QueryTypes, []string{"TXT", "HTTPS"})
+	// TXT carries the most payload per response. Mixing in HTTPS widens resolver
+	// reach but adds structurally narrower paths that bulk striping would then
+	// feed. Reach belongs in the hostile-network presets, not the speed one.
+	setClientStrings(isDefined, "QUERY_TYPES", &cfg.QueryTypes, []string{"TXT"})
+}
+
+// applyClientUDPOnlyPreset is the speed profile pinned to plain UDP. No TCP,
+// DoT or DoH candidate is ever probed or raced, so nothing can migrate the data
+// plane off UDP: resolverTransportChain("udp") yields exactly one transport.
+// Use where UDP/53 is known to work and the extra transports only cost probes.
+func applyClientUDPOnlyPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {
+	applyClientSpeedPreset(cfg, isDefined)
+
+	// The UDP pin is forced, not merely defaulted. Every other preset value is
+	// a starting point an explicit key may override, but a "udp-only" profile
+	// that silently runs on TCP is a footgun — and a real one: an embedding that
+	// renders a complete TOML (the Android app does) emits RESOLVER_TRANSPORT on
+	// every write, which would defeat the pin through the file-load path where
+	// file keys outrank the preset. Choose "speed" for UDP-first-with-fallback.
+	cfg.ResolverTransport = "udp"
+	// Per-resolver overrides are consulted before ResolverTransport, so a rendered
+	// map would reintroduce TCP/DoT/DoH for individual resolvers. Keep only the
+	// entries that agree with the pin.
+	for key, policy := range cfg.ResolverTransportPaths {
+		if normalizeConfigPresetName(policy) != "udp" {
+			delete(cfg.ResolverTransportPaths, key)
+		}
+	}
+	// The background transport sweep needs no explicit disabling here: with a
+	// single-transport chain perResolverAutoTransport() is false and the sweep
+	// is never started.
+	setClientStrings(isDefined, "QUERY_TYPES", &cfg.QueryTypes, []string{"TXT"})
 }
 
 func applyClientSurvivalPreset(cfg *ClientConfig, isDefined configKeyDefinedFunc) {

@@ -35,7 +35,7 @@ DOMAINS = ["v.domain.com"]
 # Unset / empty = TXT only (historical behavior). Recognized:
 #   TXT, CNAME, A, AAAA, NULL, MX, NS, PTR, SRV, SVCB, CAA, NAPTR, SOA, HTTPS
 # Example: QUERY_TYPES = ["TXT", "CNAME", "NULL", "HTTPS"]
-QUERY_TYPES = ["TXT", "HTTPS"]
+QUERY_TYPES = ["TXT"]
 
 # When true, the duplicate copies of a packet (see *_PACKET_DUPLICATION_COUNT)
 # are sent across distinct tunnel domains where possible, instead of just
@@ -490,9 +490,11 @@ DISPATCHER_IDLE_POLL_INTERVAL_SECONDS = 0.020
 TX_CHANNEL_SIZE = 32768
 RX_CHANNEL_SIZE = 32768
 
-# UDP connection pool size per resolver key.
+# UDP connection pool size per resolver key. This is PER RESOLVER, so the
+# retained-socket worst case multiplies by the validated resolver count.
+# Sixty-four is already above normal per-resolver worker concurrency.
 # Clamped to [1, 1024].
-RESOLVER_UDP_CONNECTION_POOL_SIZE = 1024
+RESOLVER_UDP_CONNECTION_POOL_SIZE = 64
 
 # Initial queue/store capacities.
 # These reduce reallocations under many active streams.
@@ -550,7 +552,7 @@ PING_COLD_THRESHOLD_SECONDS = 30.0
 # restarted. This recovers the "zombie" state where all resolvers are
 # silently dropping packets and no server-initiated reset (REJECT / BUSY /
 # ERROR_DROP) ever arrives. Clamped to [10s, 3600s]. Set to 0 to disable.
-PING_WATCHDOG_TIMEOUT_SECONDS = 20.0
+PING_WATCHDOG_TIMEOUT_SECONDS = 45.0
 
 # ------------------------------------------------------------------------------
 # 8) ARQ Reliability & Packing
