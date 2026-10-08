@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // CottenDNS
 // Author: tajirax
 // Github: https://github.com/TaJirax/CottenDns
@@ -10,11 +10,13 @@ package udpserver
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"cottendns-go/internal/compression"
 	DnsParser "cottendns-go/internal/dnsparser"
 	Enums "cottendns-go/internal/enums"
 	"cottendns-go/internal/logger"
+	"cottendns-go/internal/security"
 )
 
 func (s *Server) debugLoggingEnabled() bool {
@@ -36,20 +38,69 @@ func buildNoDataResponse(packet []byte) []byte {
 	return response
 }
 
-func buildNoDataResponseLite(packet []byte, parsed DnsParser.LitePacket) []byte {
-	response, err := DnsParser.BuildNoDataResponseFromLite(packet, parsed)
+func (s *Server) buildNoDataResponseLogged(packet []byte, reason string) []byte {
+	return buildNoDataResponse(packet)
+}
+
+func (s *Server) buildNoDataResponseLiteLogged(packet []byte, parsed DnsParser.LitePacket, reason string) []byte {
+	return s.zoneNoDataResponse(packet, parsed, s.domainMatcher.Match(parsed).BaseDomain)
+}
+
+// zoneNoDataResponse answers as the zone's authoritative server when the query
+// is inside one of our zones, and REFUSED otherwise (we are not a resolver).
+func (s *Server) zoneNoDataResponse(packet []byte, parsed DnsParser.LitePacket, zone string) []byte {
+	var response []byte
+	var err error
+	switch {
+	case zone == "":
+		response, err = DnsParser.BuildRefusedResponseFromLite(packet, parsed)
+	case len(s.zoneNS) > 0 && DnsParser.IsApexNSQuery(parsed, zone):
+		response, err = DnsParser.BuildAuthoritativeNSFromLite(packet, parsed, s.zoneNS)
+	default:
+		response, err = DnsParser.BuildAuthoritativeNoDataFromLite(packet, parsed, zone)
+	}
 	if err != nil {
 		return nil
 	}
 	return response
 }
 
-func (s *Server) buildNoDataResponseLogged(packet []byte, reason string) []byte {
-	return buildNoDataResponse(packet)
+// outOfZoneNameservers keeps the ZONE_NS names that are not inside one of our
+// zones. An in-zone nameserver needs glue (its address) that this server does
+// not know, and answering with it would send resolvers to a name we cannot
+// resolve, so it is dropped rather than risk the delegation.
+func outOfZoneNameservers(zones, nameservers []string) []string {
+	var out []string
+	for _, ns := range nameservers {
+		ns = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(ns)), ".")
+		if ns == "" || !strings.Contains(ns, ".") {
+			continue
+		}
+		inZone := false
+		for _, zone := range zones {
+			zone = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(zone)), ".")
+			if ns == zone || strings.HasSuffix(ns, "."+zone) {
+				inZone = true
+				break
+			}
+		}
+		if !inZone {
+			out = append(out, ns)
+		}
+	}
+	return out
 }
 
-func (s *Server) buildNoDataResponseLiteLogged(packet []byte, parsed DnsParser.LitePacket, reason string) []byte {
-	return buildNoDataResponseLite(packet, parsed)
+// markAuthoritative sets AA and clears RA on a response the server generated.
+// The shared dnsparser builders emit resolver-style flags (RA=1, AA=0), which
+// BIND rejects as a "lame" answer from a delegated server for every carrier
+// except CNAME. REFUSED replies stay non-authoritative.
+func markAuthoritative(response []byte) []byte {
+	if len(response) >= 4 && response[3]&0x0F != Enums.DNSR_CODE_REFUSED {
+		response[2] |= 0x04
+		response[3] &^= 0x80
+	}
+	return response
 }
 
 func isClosedStreamAwarePacketType(packetType uint8) bool {
@@ -69,7 +120,7 @@ func isClosedStreamAwarePacketType(packetType uint8) bool {
 }
 
 func sessionResponseModeName(mode uint8) string {
-	if mode == mtuProbeModeBase64 {
+	if mode&^security.DownstreamEncryptedFlag == mtuProbeModeBase64 {
 		return "BASE64"
 	}
 	return "RAW (Bytes)"
@@ -87,7 +138,7 @@ func buildCompressionMask(values []int) uint8 {
 }
 
 func parseMTUProbeBaseEncoding(mode uint8) (bool, bool) {
-	switch mode {
+	switch mode &^ security.DownstreamEncryptedFlag {
 	case mtuProbeModeRaw:
 		return false, true
 	case mtuProbeModeBase64:

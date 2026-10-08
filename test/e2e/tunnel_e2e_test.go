@@ -184,6 +184,15 @@ func TestTunnelEndToEndFECDownload(t *testing.T) {
 	runTunnelEcho(t, 1, 1, "FEC_DOWNLOAD_ENABLED = true\nFEC_BLOCK_SIZE = 4\nFEC_PARITY = 4\n", "", "")
 }
 
+// Each carrier must work alone; rotation must not hide a broken record type.
+func TestTunnelEndToEndSingleCarriers(t *testing.T) {
+	for _, carrier := range []string{"TXT", "NULL", "HTTPS", "SVCB", "CNAME", "A", "AAAA", "MX", "NS", "PTR", "SRV", "CAA", "NAPTR", "SOA"} {
+		t.Run(carrier, func(t *testing.T) {
+			runTunnelEcho(t, 3, 3, "", fmt.Sprintf("[%q]", carrier), "")
+		})
+	}
+}
+
 func TestTunnelEndToEndNewTransportChannels(t *testing.T) {
 	// Client rotates over the new NULL and HTTPS response channels (plus TXT and
 	// CNAME). The server must auto-accept every query type and answer with the
@@ -236,8 +245,36 @@ func TestTunnelEndToEndReshapedQNameTCPNonTXT(t *testing.T) {
 		"RESOLVER_TRANSPORT = \"tcp\"\nQNAME_LABEL_LENGTH = 24\n")
 }
 
-func runTunnelEcho(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra string) {
-	runTunnelEchoOnDNSHost(t, serverMethod, clientMethod, serverExtra, clientQueryTypes, clientExtra, "127.0.0.1")
+func TestTunnelEndToEndWithZoneNS(t *testing.T) {
+	// Answering apex NS queries (probe hardening) must not disturb tunnel traffic.
+	runTunnelEcho(t, 3, 3, "ZONE_NS = [\"ns.example.net\"]\n", "", "")
+}
+
+func TestTunnelEndToEndDomainRotation(t *testing.T) {
+	// The client's configured domain is "blocked": the server does not serve it.
+	// After two failed scans the client must switch to its standby domain and
+	// carry traffic, and learn the domain the server advertises.
+	clientLog := runTunnelEcho(t, 3, 3,
+		"DOMAIN = [\"b.io\", \"c.io\"]\nADVERTISE_DOMAINS = [\"c.io\", \"unserved.io\"]\n", "",
+		"DOMAINS = [\"blocked.io\"]\nSTANDBY_DOMAINS = [\"b.io\"]\nRESOLVER_TRANSPORT = \"udp\"\n")
+	for _, want := range []string{"switching to standby domain", "b.io", "Learned 1 standby domain"} {
+		if !strings.Contains(clientLog, want) {
+			t.Fatalf("client log lacks %q\n%s", want, clientLog)
+		}
+	}
+}
+
+func runTunnelEcho(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra string) string {
+	return runTunnelEchoOnDNSHost(t, serverMethod, clientMethod, serverExtra, clientQueryTypes, clientExtra, "127.0.0.1")
+}
+
+// defaultLine returns line unless extra already sets key, so a test can
+// override the harness defaults (TOML rejects duplicate keys).
+func defaultLine(extra, key, line string) string {
+	if strings.Contains("\n"+extra, "\n"+key+" =") {
+		return ""
+	}
+	return line
 }
 
 func requireIPv6Loopback(t *testing.T) {
@@ -255,7 +292,7 @@ func requireIPv6Loopback(t *testing.T) {
 	_ = pc.Close()
 }
 
-func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra, dnsHost string, resolverHosts ...string) {
+func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra, dnsHost string, resolverHosts ...string) string {
 	if clientQueryTypes == "" {
 		clientQueryTypes = `["TXT", "CNAME", "A", "AAAA"]`
 	}
@@ -280,7 +317,7 @@ func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, server
 PROTOCOL_TYPE = "TCP"
 UDP_HOST = %q
 UDP_PORT = %d
-DOMAIN = ["a.io"]
+%s
 MIN_VPN_LABEL_LENGTH = 1
 DATA_ENCRYPTION_METHOD = %d
 ENCRYPTION_KEY_FILE = "encrypt_key.txt"
@@ -321,7 +358,7 @@ ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS = 120.0
 ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 %s
-`, dnsHost, udpPort, serverMethod, echoPort, serverExtra)), 0644); err != nil {
+`, dnsHost, udpPort, defaultLine(serverExtra, "DOMAIN", `DOMAIN = ["a.io"]`), serverMethod, echoPort, serverExtra)), 0644); err != nil {
 		t.Fatalf("write server cfg: %v", err)
 	}
 
@@ -358,7 +395,7 @@ ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 PROTOCOL_TYPE = "TCP"
 LISTEN_IP = "127.0.0.1"
 LISTEN_PORT = %d
-DOMAINS = ["a.io"]
+%s
 ENCRYPTION_KEY = "%s"
 QUERY_TYPES = %s
 RESOLVER_BALANCING_STRATEGY = 1
@@ -368,7 +405,7 @@ DOWNLOAD_PACKET_DUPLICATION_COUNT = 1
 UPLOAD_SETUP_PACKET_DUPLICATION_COUNT = 1
 DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT = 1
 MIN_UPLOAD_MTU = 80
-MIN_DOWNLOAD_MTU = 4000
+MIN_DOWNLOAD_MTU = 16
 MAX_UPLOAD_MTU = 142
 MAX_DOWNLOAD_MTU = 4000
 MTU_TEST_RETRIES_RESOLVERS = 0
@@ -417,7 +454,7 @@ ARQ_MAX_CONTROL_RETRIES = 300
 ARQ_DATA_NACK_INITIAL_DELAY_SECONDS = 0.35
 ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 %s
-`, clientPort, encryptionKey, clientQueryTypes, clientMethod, clientExtra)), 0644); err != nil {
+`, clientPort, defaultLine(clientExtra, "DOMAINS", `DOMAINS = ["a.io"]`), encryptionKey, clientQueryTypes, clientMethod, clientExtra)), 0644); err != nil {
 		t.Fatalf("write client cfg: %v", err)
 	}
 
@@ -431,7 +468,9 @@ ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 	}
 	t.Cleanup(func() { _ = clientCmd.Process.Kill() })
 
-	if err := waitForPattern(clientLog, "is listening", 40*time.Second); err != nil {
+	// Generous: returns as soon as the client is up, but domain rotation needs
+	// two failed full scans first.
+	if err := waitForPattern(clientLog, "is listening", 150*time.Second); err != nil {
 		t.Fatalf("client did not start listening: %v\n--- client log ---\n%s\n--- server log ---\n%s",
 			err, clientLog.String(), serverLog.String())
 	}
@@ -487,6 +526,7 @@ ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 		t.Fatalf("echo mismatch: got %d bytes, want %d, equal-prefix=%d",
 			len(got), payloadSize, commonPrefix(got, payload))
 	}
+	return clientLog.String()
 }
 
 func commonPrefix(a, b []byte) int {

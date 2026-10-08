@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,6 +33,14 @@ type ServerConfig struct {
 	UDPHost      string `toml:"UDP_HOST"`
 	UDPPort      int    `toml:"UDP_PORT"`
 	UDPReaders   int    `toml:"UDP_READERS"`
+	// UDPIPv6Enabled adds a dedicated udp6 tunnel listener on UDPIPv6Host at the
+	// same UDP port, alongside the IPv4 listener, so IPv4 and IPv6 clients are
+	// served together. Like the TCP side it never relies on platform dual-stack
+	// behavior of a socket bound to [::]. It is opened dynamically: only when the
+	// host actually has a usable IPv6 address (netutil.HasIPv6), so an IPv4-only
+	// host neither fails nor wastes a socket. Default true.
+	UDPIPv6Enabled bool   `toml:"UDP_IPV6_ENABLED"`
+	UDPIPv6Host    string `toml:"UDP_IPV6_HOST"`
 	// TCPListenerEnabled also serves DNS-over-TCP on the same host:port, so
 	// clients on networks that filter or truncate UDP/53 can fall back to TCP/53.
 	// Default true. TCPMaxConns caps concurrent TCP connections (0 = default).
@@ -189,6 +198,17 @@ type ServerConfig struct {
 	ForwardIP                         string   `toml:"FORWARD_IP"`
 	ForwardPort                       int      `toml:"FORWARD_PORT"`
 	Domain                            []string `toml:"DOMAIN"`
+	// AdvertiseDomains are the tunnel domains this server tells clients about
+	// (domain rotation). Clients keep them as standby and switch to them when
+	// their configured domains get blocked. Entries not in DOMAIN are ignored.
+	// Empty (default) = advertise nothing.
+	AdvertiseDomains []string `toml:"ADVERTISE_DOMAINS"`
+	// ZoneNS are the nameserver names the parent zone delegates each DOMAIN
+	// to. When set, apex NS queries get them back like from any authoritative
+	// server, instead of an empty answer a prober could notice. Names inside a
+	// DOMAIN are ignored (they would need glue this server cannot know).
+	// Empty (default) = unchanged behavior.
+	ZoneNS []string `toml:"ZONE_NS"`
 	MinVPNLabelLength                 int      `toml:"MIN_VPN_LABEL_LENGTH"`
 	SupportedUploadCompressionTypes   []int    `toml:"SUPPORTED_UPLOAD_COMPRESSION_TYPES"`
 	SupportedDownloadCompressionTypes []int    `toml:"SUPPORTED_DOWNLOAD_COMPRESSION_TYPES"`
@@ -264,6 +284,8 @@ func defaultServerConfig() ServerConfig {
 		ProtocolType:                      "SOCKS5",
 		UDPHost:                           "0.0.0.0",
 		UDPPort:                           53,
+		UDPIPv6Enabled:                    true,
+		UDPIPv6Host:                       "::",
 		TCPListenerEnabled:                true,
 		TCPIPv6Enabled:                    true,
 		TCPIPv6Host:                       "::",
@@ -333,8 +355,10 @@ func defaultServerConfig() ServerConfig {
 		ForwardPort:                       1080,
 		Domain:                            nil,
 		MinVPNLabelLength:                 3,
-		SupportedUploadCompressionTypes:   []int{0, 3},
-		SupportedDownloadCompressionTypes: []int{0, 3},
+		SupportedUploadCompressionTypes:   []int{0, 1, 2, 3},
+		SupportedDownloadCompressionTypes: []int{0, 1, 2, 3},
+		ARecordDataDelivery:               true,
+		AAAARecordDataDelivery:            true,
 		DataEncryptionMethod:              3,
 		EncryptionAutoDetect:              true,
 		FECAutoEnabled:                    true,
@@ -435,11 +459,19 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	if cfg.UDPHost == "" {
 		cfg.UDPHost = "0.0.0.0"
 	}
+	if strings.TrimSpace(cfg.UDPIPv6Host) == "" {
+		cfg.UDPIPv6Host = "::"
+	}
+	if cfg.UDPIPv6Enabled {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(cfg.UDPIPv6Host)); err != nil || !ip.Unmap().Is6() {
+			return cfg, fmt.Errorf("UDP_IPV6_HOST must be an IPv6 address: %q", cfg.UDPIPv6Host)
+		}
+	}
 	if strings.TrimSpace(cfg.TCPIPv6Host) == "" {
 		cfg.TCPIPv6Host = "::"
 	}
 	if cfg.TCPIPv6Enabled {
-		if ip := net.ParseIP(strings.TrimSpace(cfg.TCPIPv6Host)); ip == nil || ip.To4() != nil {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(cfg.TCPIPv6Host)); err != nil || !ip.Unmap().Is6() {
 			return cfg, fmt.Errorf("TCP_IPV6_HOST must be an IPv6 address: %q", cfg.TCPIPv6Host)
 		}
 	}

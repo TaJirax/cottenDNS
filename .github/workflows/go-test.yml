@@ -1,6 +1,7 @@
 name: Go Test
 
 on:
+  workflow_call:
   push:
   pull_request:
 
@@ -55,7 +56,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run race-sensitive transport tests
-        run: go test -race -timeout 180s ./internal/arq ./internal/client ./internal/udpserver
+        run: go test -race -timeout 180s ./internal/arq ./internal/client ./internal/clientui ./internal/udpserver
 
   lint:
     runs-on: ubuntu-latest
@@ -115,6 +116,15 @@ jobs:
             echo "built ${abi}: $(stat -c%s "${so}") bytes"
           done
           echo "All four Android ABIs cross-compiled from main."
+
+      - name: Verify Android excludes the desktop terminal UI
+        run: |
+          set -euo pipefail
+          dependencies="$(GOOS=android GOARCH=arm64 CGO_ENABLED=0 go list -deps ./cmd/client)"
+          if grep -Eq 'cottendns-go/internal/clientui|github.com/charmbracelet/(bubbletea|lipgloss)' <<<"${dependencies}"; then
+            echo "::error::Android client unexpectedly includes desktop terminal UI dependencies"
+            exit 1
+          fi
 
   deployment-contract:
     runs-on: ubuntu-latest

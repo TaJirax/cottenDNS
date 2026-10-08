@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ import (
 	domainMatcher "cottendns-go/internal/domainmatcher"
 	fragmentStore "cottendns-go/internal/fragmentstore"
 	"cottendns-go/internal/logger"
+	"cottendns-go/internal/netutil"
 	"cottendns-go/internal/security"
 	VpnProto "cottendns-go/internal/vpnproto"
 )
@@ -34,7 +36,7 @@ const (
 	mtuProbeMetaLength  = mtuProbeCodeLength + 2
 	mtuProbeUpMinSize   = 1 + mtuProbeCodeLength
 	mtuProbeDownMinSize = mtuProbeUpMinSize + 2
-	mtuProbeMinDownSize = 30
+	mtuProbeMinDownSize = VpnProto.MinMTUDownloadProbePayload
 	mtuProbeMaxDownSize = 4096
 )
 
@@ -44,10 +46,13 @@ type Server struct {
 	cfg                      config.ServerConfig
 	log                      *logger.Logger
 	codec                    *security.Codec
-	codecs                   []*security.Codec // candidate codecs for encryption-method auto-detect
-	preferredCodec           atomic.Int32      // index into codecs to try first
-	codecAccepted            [6]atomic.Uint64  // successful ingress frames by encryption method
+	codecs                   []*security.Codec  // candidate codecs for encryption-method auto-detect
+	preferredCodec           atomic.Int32       // index into codecs to try first
+	codecAccepted            [6]atomic.Uint64   // successful ingress frames by encryption method
+	ingressReplay            ingressReplayCache // authenticated requests already dispatched
 	domainMatcher            *domainMatcher.Matcher
+	advertisedDomains        []string // ADVERTISE_DOMAINS ∩ DOMAIN, see domain_rotation.go
+	zoneNS                   []string // ZONE_NS outside our zones, see server_utils.go
 	sessions                 *sessionStore
 	deferredDNSSession       *deferredSessionProcessor
 	deferredConnectSession   *deferredSessionProcessor
@@ -358,6 +363,8 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 		codec:                  codec,
 		codecs:                 []*security.Codec{codec}, // single-codec until SetCodecSet enables auto-detect
 		domainMatcher:          domainMatcher.New(cfg.Domain, cfg.MinVPNLabelLength),
+		advertisedDomains:      servedAdvertisedDomains(cfg.Domain, cfg.AdvertiseDomains),
+		zoneNS:                 outOfZoneNameservers(cfg.Domain, cfg.ZoneNS),
 		sessions:               newSessionStore(cfg.SessionOrphanQueueInitialCap, cfg.StreamQueueInitialCapacity, cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap, cfg.MaxStreamsPerSession, cfg.MaxActiveSessions),
 		deferredDNSSession:     newDeferredSessionProcessor(dnsDeferredWorkers, dnsDeferredQueue, log),
 		deferredConnectSession: newDeferredSessionProcessor(connectDeferredWorkers, connectDeferredQueue, log),
@@ -576,6 +583,23 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if err != nil {
 		return err
+	}
+
+	// Serve IPv4 and IPv6 clients together. The IPv6 tunnel socket is opened
+	// dynamically — only when this is an IPv4 primary and the host actually has
+	// a usable IPv6 address — so an IPv4-only host neither errors nor wastes a
+	// socket. Responses go back on req.conn, the exact socket a datagram arrived
+	// on, so a v6 client is answered over the v6 socket.
+	if s.cfg.UDPIPv6Enabled && listenAddr.IP.To4() != nil && netutil.HasIPv6() {
+		v6Addr, v6Err := net.ResolveUDPAddr("udp6", net.JoinHostPort(strings.TrimSpace(s.cfg.UDPIPv6Host), strconv.Itoa(s.cfg.UDPPort)))
+		if v6Err != nil {
+			s.log.Warnf("<yellow>IPv6 UDP listener address invalid; IPv4 UDP remains active:</yellow> %v", v6Err)
+		} else if v6Conns, listenErr := s.listenUDP(v6Addr); listenErr != nil {
+			s.log.Warnf("<yellow>IPv6 UDP listener unavailable; IPv4 UDP remains active:</yellow> %v", listenErr)
+		} else {
+			conns = append(conns, v6Conns...)
+			s.log.Infof("\U0001F4E1 <green>IPv6 UDP Listener Ready, Addr: <cyan>%s</cyan></green>", v6Addr.String())
+		}
 	}
 	s.running.Store(true)
 	defer s.running.Store(false)

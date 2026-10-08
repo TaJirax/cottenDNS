@@ -18,7 +18,6 @@ import (
 	"net"
 	"time"
 
-	"cottendns-go/internal/dnsparser"
 	VpnProto "cottendns-go/internal/vpnproto"
 )
 
@@ -37,7 +36,14 @@ const (
 )
 
 func runtimeDNSReadBufferSize(maxDownloadMTU int) int {
-	size := maxDownloadMTU + 2048 // DNS framing, TXT chunks and encryption slack.
+	// Base64 TXT is the widest bulk carrier: each 189 ciphertext bytes needs
+	// a two-byte chunk header, up to 255 base64 bytes and 13 DNS RR bytes.
+	// Include the largest VPN header, AEAD overhead and question/OPT budget.
+	if maxDownloadMTU >= RuntimeUDPReadBufferSize {
+		return RuntimeUDPReadBufferSize
+	}
+	frame := max(0, maxDownloadMTU) + VpnProto.MaxHeaderRawSize() + 28
+	size := 512 + ((frame+188)/189)*268
 	if size < runtimeDNSReadBufferFloor {
 		size = runtimeDNSReadBufferFloor
 	}
@@ -121,6 +127,17 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 		}
 
 		if n >= 2 && binary.BigEndian.Uint16(buffer[:2]) == expectedID {
+			// A forged NXDOMAIN raced in by an on-path censor would end this
+			// exchange (MTU probe, session init, recheck) before the real answer
+			// lands and drop a working resolver. Skip it as the live tunnel does
+			// (RESOLVER_IGNORE_INJECTED_NXDOMAIN); the deadline still catches a
+			// path that is really dead. Opt-in (..._IN_PROBES): when the real
+			// answer never comes, each skip costs a full probe timeout.
+			if n >= 4 && c.cfg.ResolverIgnoreInjectedNXDOMAINInProbes && c.rcodeIsInjectedNoise(buffer[3]&0x0F) {
+				addr, _ := conn.RemoteAddr().(*net.UDPAddr)
+				c.noteInjectedResolverNoise(addr)
+				continue
+			}
 			// Copy matched response out so the pooled buffer can be recycled.
 			result := make([]byte, n)
 			copy(result, buffer[:n])
@@ -135,6 +152,11 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 }
 
 func (c *Client) sendOneWayDNSQuery(resolver Connection, packet []byte, deadline time.Time) error {
+	limitCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if !c.queryLimiter.wait(limitCtx, resolver.Resolver, resolver.Domain) {
+		return limitCtx.Err()
+	}
 	if c.usesStreamTransport() {
 		// Best-effort one-shot over the active stream transport (e.g. the
 		// session-close burst). DoH has no one-way form, so it reuses the normal
@@ -332,6 +354,7 @@ func (t *udpQueryTransport) Close() error {
 // packet, over the client's active transport (UDP, or DNS-over-TCP in TCP mode).
 func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeout time.Duration) (VpnProto.Packet, error) {
 	var response []byte
+	c.queryLimiter.wait(context.Background(), conn.Resolver, conn.Domain)
 
 	if c.usesStreamTransport() {
 		transport, err := c.newQueryTransport(conn.ResolverLabel)
@@ -356,7 +379,7 @@ func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeou
 		c.putUDPConn(conn.ResolverLabel, udpConn)
 	}
 
-	packet, err := dnsparser.ExtractVPNResponseMatching(response, c.responseMode == mtuProbeBase64Reply, c.cfg.Domains)
+	packet, err := c.extractVPNResponse(response, c.cfg.BaseEncodeData)
 	if err != nil {
 		return VpnProto.Packet{}, err
 	}
@@ -369,6 +392,9 @@ func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeou
 // exchanges immediately instead of keeping sockets and HTTP streams alive until
 // their full timeout.
 func (c *Client) exchangeDNSOverConnectionContext(ctx context.Context, conn Connection, query []byte, timeout time.Duration) (VpnProto.Packet, error) {
+	if !c.queryLimiter.wait(ctx, conn.Resolver, conn.Domain) {
+		return VpnProto.Packet{}, ctx.Err()
+	}
 	transport, err := c.newQueryTransport(conn.ResolverLabel)
 	if err != nil {
 		return VpnProto.Packet{}, err
@@ -393,6 +419,6 @@ func (c *Client) exchangeDNSOverConnectionContext(ctx context.Context, conn Conn
 		if res.err != nil {
 			return VpnProto.Packet{}, res.err
 		}
-		return dnsparser.ExtractVPNResponseMatching(res.response, c.responseMode == mtuProbeBase64Reply, c.cfg.Domains)
+		return c.extractVPNResponse(res.response, c.cfg.BaseEncodeData)
 	}
 }

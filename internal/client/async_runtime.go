@@ -21,6 +21,8 @@ import (
 	DnsParser "cottendns-go/internal/dnsparser"
 	Enums "cottendns-go/internal/enums"
 	fragmentStore "cottendns-go/internal/fragmentstore"
+	"cottendns-go/internal/security"
+	VpnProto "cottendns-go/internal/vpnproto"
 )
 
 const clientRXDropLogInterval = 2 * time.Second
@@ -48,10 +50,9 @@ func (p tunnelSocketPair) forAddr(addr *net.UDPAddr) *net.UDPConn {
 
 func (c *Client) configuredResolverFamilies() (want4, want6 bool) {
 	for _, resolver := range c.cfg.Resolvers {
-		ip := net.ParseIP(resolver.IP)
-		if ip != nil && ip.To4() == nil {
+		if resolverAddressIsIPv6(resolver.IP) {
 			want6 = true
-		} else if ip != nil {
+		} else if net.ParseIP(resolver.IP) != nil {
 			want4 = true
 		}
 	}
@@ -240,7 +241,7 @@ func (c *Client) resetSessionState(resetSessionCookie bool) {
 	if resetSessionCookie {
 		c.sessionCookie = 0
 	}
-	c.responseMode = 0
+	c.responseMode = c.configuredResponseMode()
 	c.clearSessionInitBusyUntil()
 	c.resetSessionInitState()
 }
@@ -612,7 +613,16 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 				continue
 			}
 
-			encoded, err := c.buildEncodedAutoWithCompressionTrace(task.opts)
+			// Compress once per frame; only re-encrypt for different questions.
+			raw, err := VpnProto.BuildRawAuto(task.opts, c.effectiveCompressionMinSize())
+			var encoded []byte
+			if err == nil {
+				if c.codec == nil {
+					err = VpnProto.ErrCodecUnavailable
+				} else {
+					encoded, err = c.codec.EncryptAndEncodeBytes(raw)
+				}
+			}
 			if err != nil {
 				if !task.wasPacked && task.selected != nil {
 					task.selected.ReleaseTXPacket(task.item)
@@ -634,7 +644,7 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 			frames = frames[:0]
 
 			for _, resolverConn := range task.conns {
-				datagramQueryType := c.nextQueryTypeForPath(resolverConn.Key)
+				datagramQueryType := c.nextQueryTypeForPacketPath(resolverConn.Key, task.packetType)
 				domain := resolverConn.Domain
 				if domain == "" {
 					domain = defaultDomain
@@ -677,7 +687,14 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 					cacheKey := domain + "#" + itoaInt(int(datagramQueryType))
 					dnsPacket, cached = packetByDomain[cacheKey]
 					if !cached {
-						dnsPacket, err = c.buildTunnelTXTQuestionBytesPrepared(prepared, encoded, datagramQueryType)
+						queryEncoded := encoded
+						if c.codec != nil && security.IsAuthenticatedMethod(c.codec.Method()) {
+							queryEncoded, err = c.codec.EncryptAndEncodeBytes(raw)
+							if err != nil {
+								continue
+							}
+						}
+						dnsPacket, err = c.buildTunnelTXTQuestionBytesPrepared(prepared, queryEncoded, datagramQueryType)
 						if err != nil {
 							continue
 						}
@@ -690,6 +707,8 @@ func (c *Client) asyncEncodeWorker(ctx context.Context, id int) {
 					serverKey: resolverConn.Key,
 					packet:    dnsPacket,
 					priority:  Enums.DefaultPacketPriority(task.packetType),
+					resolver:  resolverConn.Resolver,
+					domain:    domain,
 				})
 			}
 
@@ -738,9 +757,17 @@ func (c *Client) asyncWriterWorker(ctx context.Context, id int, sockets tunnelSo
 				return
 			}
 			now := time.Now()
-			for _, frame := range task.frames {
+			for i, frame := range task.frames {
 				if frame.addr == nil || len(frame.packet) == 0 {
 					continue
+				}
+				// The dispatcher already claimed the first frame's slot; extra
+				// duplicate frames pay their own here.
+				if i > 0 && c.queryLimiter != nil {
+					if !c.queryLimiter.wait(ctx, frame.resolver, frame.domain) {
+						return
+					}
+					now = time.Now()
 				}
 				if useStream {
 					// TCP/DoT/DoH: route through the persistent per-resolver
@@ -766,10 +793,15 @@ func (c *Client) asyncWriterWorker(ctx context.Context, id int, sockets tunnelSo
 				if conn.LocalAddr() != nil {
 					localAddr = conn.LocalAddr().String()
 				}
+				// Publish the pending question before the datagram can reach
+				// the resolver. A loopback/LAN reply may beat WriteToUDP's
+				// return and must not be rejected as unsolicited.
+				c.trackResolverSend(frame.packet, frame.addr.String(), localAddr, frame.serverKey, now)
 				if _, err := conn.WriteToUDP(frame.packet, frame.addr); err == nil {
 					c.recordTunnelSend(now)
-					c.trackResolverSend(frame.packet, frame.addr.String(), localAddr, frame.serverKey, now)
 					c.txTotalBytes.Add(uint64(len(frame.packet)))
+				} else {
+					c.discardResolverSend(frame.packet, frame.addr.String(), localAddr, now)
 				}
 			}
 			if !task.wasPacked && task.selected != nil {
@@ -854,7 +886,7 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
 
 	// 1. Extract VPN Packet from DNS Response (TXT chunks or, for A2 rotated
 	// queries, a CNAME answer decoded against the configured tunnel domains).
-	vpnPacket, err := DnsParser.ExtractVPNResponseMatching(data, c.responseMode == mtuProbeBase64Reply, c.cfg.Domains)
+	vpnPacket, err := c.extractVPNResponse(data, c.cfg.BaseEncodeData)
 	if err != nil {
 		if errors.Is(err, DnsParser.ErrTXTAnswerMissing) {
 			receivedAt := time.Now()
@@ -879,7 +911,16 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
 		return
 	}
 
-	c.trackResolverSuccess(data, addr, localAddr, time.Now())
+	if !c.acceptsSessionResponse(vpnPacket) {
+		return
+	}
+	accepted, handled := c.acceptDownstreamPacketReplay(data, addr, localAddr, vpnPacket)
+	if !accepted {
+		return
+	}
+	if !handled {
+		c.trackResolverSuccess(data, addr, localAddr, time.Now())
+	}
 	// if c.log != nil && c.log.Enabled(logger.LevelDebug) && vpnPacket.PacketType != Enums.PACKET_PONG {
 	// 	if vpnPacket.PacketType == Enums.PACKET_STREAM_DATA_ACK {
 	// 		c.log.Debugf("Client received ACK | Stream: %d | Seq: %d", vpnPacket.StreamID, vpnPacket.SequenceNum)

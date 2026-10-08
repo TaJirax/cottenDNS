@@ -79,11 +79,22 @@ func udpSocketCount(readers int) int {
 // others run free, so anything short of the full count is torn down in favour of
 // the predictable single-socket path.
 func (s *Server) listenUDP(addr *net.UDPAddr) ([]*net.UDPConn, error) {
+	// Bind to an explicit address family so an IPv6 wildcard ([::]) never
+	// silently becomes a dual-stack socket that also swallows IPv4 — the IPv4
+	// and IPv6 listeners are kept as distinct sockets, matching the TCP side.
+	network := "udp"
+	if addr != nil && addr.IP != nil {
+		if addr.IP.To4() != nil {
+			network = "udp4"
+		} else {
+			network = "udp6"
+		}
+	}
 	sockets := udpSocketCount(s.cfg.UDPReaders)
 	if reusePortSupported && sockets > 1 {
 		conns := make([]*net.UDPConn, 0, sockets)
 		for range sockets {
-			conn, err := listenUDPReusePort(addr)
+			conn, err := listenUDPReusePort(network, addr)
 			if err != nil {
 				for _, opened := range conns {
 					_ = opened.Close()
@@ -101,7 +112,7 @@ func (s *Server) listenUDP(addr *net.UDPAddr) ([]*net.UDPConn, error) {
 		}
 	}
 
-	conn, err := net.ListenUDP("udp", addr)
+	conn, err := net.ListenUDP(network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +122,13 @@ func (s *Server) listenUDP(addr *net.UDPAddr) ([]*net.UDPConn, error) {
 // startReaders runs one reader per socket when SO_REUSEPORT gave us a socket
 // each, and otherwise fans every reader onto the single shared socket.
 func (s *Server) startReaders(ctx context.Context, conns []*net.UDPConn, queues ingressQueues, readErrCh chan<- error, readerWG *sync.WaitGroup) {
-	for i := range s.cfg.UDPReaders {
+	// Never fewer readers than sockets, or an appended IPv6 socket could go
+	// unread on low UDP_READERS configs (i%len would never reach it).
+	readers := s.cfg.UDPReaders
+	if readers < len(conns) {
+		readers = len(conns)
+	}
+	for i := range readers {
 		conn := conns[i%len(conns)]
 		readerWG.Add(1)
 		go func(readerID int, conn *net.UDPConn) {
@@ -242,6 +259,16 @@ func (s *Server) readLoop(ctx context.Context, conn *net.UDPConn, queues ingress
 		prepared, ok := s.prepareIngressPacket(buffer[:n])
 		if !ok {
 			s.ingressRejectedPackets.Add(1)
+			// In-zone queries that are not tunnel frames (QNAME-minimisation
+			// probes, CNAME-target chases, apex SOA/NS checks) still need an
+			// answer, or resolvers time out and mark the delegation dead. It is a
+			// small fixed reply sent inline, so it never touches the queues.
+			// Out-of-zone noise stays unanswered: we are not a reflector.
+			if zone := prepared.decision.BaseDomain; zone != "" {
+				if response := s.zoneNoDataResponse(buffer[:n], prepared.parsed, zone); response != nil {
+					_, _ = conn.WriteToUDP(response, addr)
+				}
+			}
 			s.packetPool.Put(buffer)
 			continue
 		}
@@ -378,7 +405,7 @@ func (s *Server) dnsWorker(ctx context.Context, queues ingressQueues, workerID i
 }
 
 func (s *Server) processIngressRequest(req request, workerID int) {
-	response := s.safeHandlePreparedIngress(req.buf[:req.size], req.prepared)
+	response := markAuthoritative(s.safeHandlePreparedIngress(req.buf[:req.size], req.prepared))
 	if len(response) != 0 {
 		if _, err := req.conn.WriteToUDP(response, req.addr); err != nil {
 			s.log.Debugf(
@@ -409,7 +436,7 @@ func (s *Server) safeHandlePacket(packet []byte) (response []byte) {
 		}
 	}()
 
-	return s.handlePacket(packet)
+	return markAuthoritative(s.handlePacket(packet))
 }
 
 func (s *Server) safeHandlePreparedIngress(packet []byte, prepared preparedIngress) (response []byte) {

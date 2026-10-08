@@ -25,13 +25,18 @@ import (
 )
 
 type ClientConfig struct {
-	ConfigDir                 string   `toml:"-"`
-	ConfigPath                string   `toml:"-"`
-	ResolversFilePath         string   `toml:"-"`
-	explicitRX_TX_Workers     bool     `toml:"-"`
-	ConfigPreset              string   `toml:"CONFIG_PRESET"`
-	ProtocolType              string   `toml:"PROTOCOL_TYPE"`
-	Domains                   []string `toml:"DOMAINS"`
+	ConfigDir             string   `toml:"-"`
+	ConfigPath            string   `toml:"-"`
+	ResolversFilePath     string   `toml:"-"`
+	explicitRX_TX_Workers bool     `toml:"-"`
+	ConfigPreset          string   `toml:"CONFIG_PRESET"`
+	ProtocolType          string   `toml:"PROTOCOL_TYPE"`
+	Domains               []string `toml:"DOMAINS"`
+	// StandbyDomains (domain rotation) are tunnel domains on the same server
+	// that are never queried until the active ones stop working, so a firewall
+	// watching traffic cannot block them in advance. Tried in order, one at a
+	// time, after a full scan finds no working path.
+	StandbyDomains            []string `toml:"STANDBY_DOMAINS"`
 	ListenIP                  string   `toml:"LISTEN_IP"`
 	ListenPort                int      `toml:"LISTEN_PORT"`
 	SOCKS5Auth                bool     `toml:"SOCKS5_AUTH"`
@@ -67,6 +72,22 @@ type ClientConfig struct {
 	// self-gating (does nothing to healthy resolvers) and never idles the client.
 	// Default true.
 	ResolverRateLimitEnabled bool `toml:"RESOLVER_RATE_LIMIT_ENABLED"`
+	// Query rate limits (see internal/client/query_rate_limit.go): hard caps
+	// on outgoing DNS queries for networks that drop DNS above a fixed rate.
+	// Each scope is independent and they stack; 0 = scope off (default).
+	// Any non-zero scope also forces duplication to 1, disables session-init
+	// racing and adaptive duplication, and shrinks health-recheck batches,
+	// because under a cap every extra query costs real throughput.
+	QueryRateLimitPerSecond            float64 `toml:"QUERY_RATE_LIMIT_PER_SECOND"`
+	QueryRateLimitPerResolverPerSecond float64 `toml:"QUERY_RATE_LIMIT_PER_RESOLVER_PER_SECOND"`
+	QueryRateLimitPerDomainPerSecond   float64 `toml:"QUERY_RATE_LIMIT_PER_DOMAIN_PER_SECOND"`
+	// QueryRateLimitBurst is how many queries may go back-to-back before
+	// spacing applies (default 1 = evenly spaced).
+	QueryRateLimitBurst int `toml:"QUERY_RATE_LIMIT_BURST"`
+	// QueryTimingJitter (0..1) stretches every rate-limit gap and ping interval
+	// by a random fraction up to this value, so traffic has no fixed rhythm.
+	// Only lengthens gaps. 0 = off (default).
+	QueryTimingJitter float64 `toml:"QUERY_TIMING_JITTER"`
 	// ResolverTransport selects how DNS queries reach resolvers:
 	//   "auto" (default) — probe over UDP first; if no resolver passes MTU
 	//                       testing, retry the whole fleet over TCP/53.
@@ -297,6 +318,13 @@ type ClientConfig struct {
 	// punishing resolvers the censor is forging failures for. Set false to
 	// restore the legacy behavior of counting every NXDOMAIN as a failure.
 	ResolverIgnoreInjectedNXDOMAIN bool `toml:"RESOLVER_IGNORE_INJECTED_NXDOMAIN"`
+	// ResolverIgnoreInjectedNXDOMAINInProbes extends that to MTU probes,
+	// session init and health rechecks: an NXDOMAIN there is skipped and the
+	// client waits for the real answer until the probe timeout. Default false:
+	// on networks where the censor forges NXDOMAIN and drops the real answer,
+	// every such resolver then costs MTU_TEST_RETRIES x MTU_TEST_TIMEOUT instead
+	// of failing at once, which stalls scans over large resolver lists.
+	ResolverIgnoreInjectedNXDOMAINInProbes bool `toml:"RESOLVER_IGNORE_INJECTED_NXDOMAIN_IN_PROBES"`
 }
 
 type ClientConfigOverrides struct {
@@ -712,6 +740,23 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.RecheckInactiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckInactiveIntervalSeconds, 30.0), 30.0, 86400.0)
 	cfg.RecheckServerIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckServerIntervalSeconds, 1.0), 1.0, 600.0)
 	cfg.RecheckBatchSize = clampInt(defaultIntBelow(cfg.RecheckBatchSize, 1, 30), 1, 1024)
+	cfg.QueryRateLimitPerSecond = max(cfg.QueryRateLimitPerSecond, 0)
+	cfg.QueryRateLimitPerResolverPerSecond = max(cfg.QueryRateLimitPerResolverPerSecond, 0)
+	cfg.QueryRateLimitPerDomainPerSecond = max(cfg.QueryRateLimitPerDomainPerSecond, 0)
+	cfg.QueryRateLimitBurst = clampInt(cfg.QueryRateLimitBurst, 1, 64)
+	cfg.QueryTimingJitter = clampFloat(cfg.QueryTimingJitter, 0, 1)
+	if cfg.QueryRateLimited() {
+		// Under a query cap a duplicate costs the same as a new packet, while
+		// ARQ only resends what was actually lost, so spend nothing on copies.
+		cfg.UploadPacketDuplicationCount = 1
+		cfg.DownloadPacketDuplicationCount = 1
+		cfg.UploadSetupPacketDuplicationCount = 1
+		cfg.DownloadSetupPacketDuplicationCount = 1
+		cfg.AdaptiveDuplication = false
+		cfg.SessionInitRacingCount = 1
+		cfg.MTUBackgroundParallelism = 1
+		cfg.RecheckBatchSize = min(cfg.RecheckBatchSize, 2)
+	}
 	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 90.0), 1.0, 86400.0)
 	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 3), 1, 10000)
 	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 1.0), 0.25, 600.0)
@@ -843,6 +888,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	if len(cfg.Domains) == 0 {
 		return cfg, fmt.Errorf("DOMAINS must contain at least one domain")
 	}
+	cfg.StandbyDomains = AppendNewDomains(nil, cfg.StandbyDomains, cfg.Domains)
 
 	cfg.ResolversFilePath = strings.TrimSpace(cfg.ResolversFilePath)
 
@@ -939,6 +985,27 @@ func normalizeClientDomains(domains []string) []string {
 	return normalized
 }
 
+// AppendNewDomains appends each normalized candidate not already in list or
+// exclude, keeping order (standby domains are tried in the order given).
+func AppendNewDomains(list, candidates, exclude []string) []string {
+	seen := make(map[string]struct{}, len(list)+len(exclude))
+	for _, d := range append(append([]string(nil), list...), exclude...) {
+		seen[d] = struct{}{}
+	}
+	for _, d := range candidates {
+		d = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+		if d == "" {
+			continue
+		}
+		if _, dup := seen[d]; dup {
+			continue
+		}
+		seen[d] = struct{}{}
+		list = append(list, d)
+	}
+	return list
+}
+
 func defaultString(value string, fallback string) string {
 	if value == "" {
 		return fallback
@@ -955,6 +1022,11 @@ func defaultIntBelow(value int, minValue int, fallback int) int {
 
 func (c ClientConfig) DispatcherIdlePollInterval() time.Duration {
 	return time.Duration(c.DispatcherIdlePollIntervalSeconds * float64(time.Second))
+}
+
+// QueryRateLimited reports whether any QUERY_RATE_LIMIT_* scope is enabled.
+func (c ClientConfig) QueryRateLimited() bool {
+	return c.QueryRateLimitPerSecond > 0 || c.QueryRateLimitPerResolverPerSecond > 0 || c.QueryRateLimitPerDomainPerSecond > 0
 }
 
 func (c ClientConfig) PingAggressiveInterval() time.Duration {

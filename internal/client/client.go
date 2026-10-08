@@ -63,6 +63,7 @@ type Client struct {
 	resolverAddrCache  map[string]*net.UDPAddr
 	resolverStatsMu    sync.RWMutex
 	resolverPending    map[resolverSampleKey]resolverSample
+	downstreamReplay   downstreamReplayCache
 	resolverHealthMu   sync.RWMutex
 	resolverHealth     map[string]*resolverHealthState
 	resolverRecheck    map[string]resolverRecheckState
@@ -225,6 +226,15 @@ type Client struct {
 
 	// pacer applies per-resolver adaptive rate limiting (see resolver_pacer.go).
 	pacer *resolverPacer
+	// queryLimiter is the optional global DNS query rate cap (nil = off).
+	queryLimiter *queryRateLimiter
+
+	// Domain rotation (domain_rotation.go). domainsMu guards standbyDomains
+	// and writes to cfg.Domains; failedFullScans is Run-loop only.
+	domainsMu          sync.Mutex
+	standbyDomains     []string
+	failedFullScans    int
+	domainListAnswered atomic.Bool
 
 	// Local Proxy Daemons
 	tcpListener *TCPListener
@@ -292,6 +302,8 @@ type encodedOutboundDatagram struct {
 	serverKey string
 	packet    []byte
 	priority  int
+	resolver  string // query rate limit scope keys
+	domain    string
 }
 
 type encodedOutboundTask struct {
@@ -462,6 +474,13 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		codec:                    codec,
 		balancer:                 NewBalancer(balancerStrategy),
 		pacer:                    newResolverPacer(cfg.ResolverRateLimitEnabled),
+		queryLimiter: newQueryRateLimiter(
+			cfg.QueryRateLimitPerSecond,
+			cfg.QueryRateLimitPerResolverPerSecond,
+			cfg.QueryRateLimitPerDomainPerSecond,
+			cfg.QueryRateLimitBurst,
+			cfg.QueryTimingJitter,
+		),
 		uploadCompression:        uint8(cfg.UploadCompressionType),
 		downloadCompression:      uint8(cfg.DownloadCompressionType),
 		mtuCryptoOverhead:        mtuCryptoOverhead(cfg.DataEncryptionMethod),
@@ -530,6 +549,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 
 	c.carrier = newCarrierSelector(c.queryTypes, c.now)
 	c.pingManager = newPingManager(c)
+	c.initDomainRotation()
 	return c
 }
 
@@ -556,6 +576,13 @@ func (c *Client) Run(ctx context.Context) error {
 	c.runtimePhase.Store(clientPhaseStarting)
 	defer c.runtimePhase.Store(clientPhaseStopped)
 	c.log.Infof("\U0001F504 <cyan>Starting main runtime loop...</cyan>")
+	if c.queryLimiter != nil {
+		c.log.Infof(
+			"\U0001F6A6 <cyan>Query rate limit: total=%g/s per-resolver=%g/s per-domain=%g/s burst=%d jitter=%g (duplication forced to 1, session racing off)</cyan>",
+			c.cfg.QueryRateLimitPerSecond, c.cfg.QueryRateLimitPerResolverPerSecond, c.cfg.QueryRateLimitPerDomainPerSecond,
+			c.cfg.QueryRateLimitBurst, c.cfg.QueryTimingJitter,
+		)
+	}
 	c.logConnectionProgress("starting", 5)
 	sessionInitRetryDelay := time.Duration(0)
 	sessionInitRetryFailures := 0
@@ -607,7 +634,7 @@ func (c *Client) Run(ctx context.Context) error {
 						c.notifySessionCloseBurst(time.Second)
 						c.StopAsyncRuntime()
 						return nil
-					case <-time.After(5 * time.Second):
+					case <-time.After(c.failedScanRetryDelay()):
 					}
 					continue
 				}
@@ -621,12 +648,13 @@ func (c *Client) Run(ctx context.Context) error {
 						c.notifySessionCloseBurst(time.Second)
 						c.StopAsyncRuntime()
 						return nil
-					case <-time.After(5 * time.Second):
+					case <-time.After(c.failedScanRetryDelay()):
 					}
 					continue
 				}
 
 				c.successMTUChecks = true
+				c.failedFullScans = 0
 				c.ShortPrintBanner()
 			}
 
@@ -638,7 +666,7 @@ func (c *Client) Run(ctx context.Context) error {
 				}
 
 				c.logConnectionProgress("session", 90, "attempt", sessionInitRetryFailures+1)
-				if err := c.InitializeSession(retries); err != nil {
+				if err := c.InitializeSessionContext(ctx, retries); err != nil {
 					sessionInitRetryFailures++
 					if c.rotateResolverFamilyAfterSessionFailure() {
 						c.runtimePhase.Store(clientPhaseRecovering)
@@ -682,6 +710,7 @@ func (c *Client) Run(ctx context.Context) error {
 				}
 
 				c.ensureLocalDNSCachePersistence(ctx)
+				c.requestDomainList(ctx)
 			}
 
 			select {
