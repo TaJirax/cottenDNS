@@ -48,6 +48,8 @@ func resolveEDNSUDPSize(configured int) uint16 {
 }
 
 type Client struct {
+	dnsReplyWaiters atomic.Int32
+
 	cfg      config.ClientConfig
 	log      *logger.Logger
 	codec    *security.Codec
@@ -469,11 +471,11 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 
 	runtimeBufferSize := runtimeDNSReadBufferSize(cfg.MaxDownloadMTU)
 	c := &Client{
-		cfg:                      cfg,
-		log:                      log,
-		codec:                    codec,
-		balancer:                 NewBalancer(balancerStrategy),
-		pacer:                    newResolverPacer(cfg.ResolverRateLimitEnabled),
+		cfg:      cfg,
+		log:      log,
+		codec:    codec,
+		balancer: NewBalancer(balancerStrategy),
+		pacer:    newResolverPacer(cfg.ResolverRateLimitEnabled),
 		queryLimiter: newQueryRateLimiter(
 			cfg.QueryRateLimitPerSecond,
 			cfg.QueryRateLimitPerResolverPerSecond,

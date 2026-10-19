@@ -16,6 +16,7 @@ import (
 // EmbeddedConfig describes one isolated account. All egress belongs to the
 // caller: there is no fallback to an unmetered socket when a hook rejects it.
 type EmbeddedConfig struct {
+	Domains     []string
 	Domain      string
 	Key         string
 	DialContext func(context.Context, string, string) (net.Conn, error)
@@ -43,6 +44,18 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
 	}
 	cfg := config.DefaultServerConfig()
 	cfg.Domain = []string{in.Domain}
+	if len(in.Domains) > 0 {
+		if len(in.Domains) > 8 {
+			return nil, errors.New("at most eight embedded domains")
+		}
+		for _, domain := range in.Domains {
+			if domain == "" || len(domain) > 128 || strings.ContainsAny(domain, " /\\\t\n") {
+				return nil, errors.New("invalid embedded domain")
+			}
+		}
+		cfg.Domain = append([]string(nil), in.Domains...)
+	}
+	cfg.AdvertiseDomains = append([]string(nil), cfg.Domain...)
 	cfg.DataEncryptionMethod, cfg.EncryptionAutoDetect = 5, false
 	cfg.TCPListenerEnabled, cfg.UDPIPv6Enabled, cfg.TCPIPv6Enabled = false, false, false
 	cfg.MinVPNLabelLength = 1
