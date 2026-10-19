@@ -19,7 +19,7 @@ jobs:
       - run: |
           go mod verify
           go test ./... -count=1 -timeout 180s
-          go test -race ./internal/udpserver ./internal/security -count=1 -timeout 180s
+          go test -race ./internal/udpserver ./internal/security ./internal/client -count=1 -timeout 180s
           go vet ./...
           go build -o "$RUNNER_TEMP/cotten-client" ./cmd/client
           go build -o "$RUNNER_TEMP/cotten-server" ./cmd/server
