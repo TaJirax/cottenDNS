@@ -43,6 +43,8 @@ const (
 var preSessionPacketTypes = buildPreSessionPacketTypes()
 
 type Server struct {
+	embeddedDialContext      func(context.Context, string, string) (net.Conn, error)
+	embeddedDNSExchange      func([]byte) ([]byte, error)
 	cfg                      config.ServerConfig
 	log                      *logger.Logger
 	codec                    *security.Codec
