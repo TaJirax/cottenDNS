@@ -305,7 +305,8 @@ func (c *Client) HandleDNSQueryRes(packet VpnProto.Packet) error {
 }
 
 // ProcessDNSQuery handles a DNS query by checking the local cache or dispatching to the tunnel.
-// It only responds on cache hits and uses "fire-and-forget" for misses.
+// Cache misses retain a bounded reply waiter so the original UDP request gets
+// its response without depending on an application retransmission.
 func (c *Client) ProcessDNSQuery(query []byte, addr net.Addr, respond func([]byte)) bool {
 	if c == nil || !c.SessionReady() {
 		return false
@@ -338,6 +339,7 @@ func (c *Client) ProcessDNSQuery(query []byte, addr net.Addr, respond func([]byt
 		}
 
 		if res.Status == dnsCache.StatusPending && !res.DispatchNeeded {
+			c.waitDNSReply(key, query, respond)
 			// Already pending in tunnel, don't re-dispatch
 			if c.log != nil {
 				c.log.Debugf("🔍 <yellow>DNS Query Pending: %s (%d)</yellow>", question.Name, question.Type)
@@ -349,7 +351,39 @@ func (c *Client) ProcessDNSQuery(query []byte, addr net.Addr, respond func([]byt
 	// 3. Dispatch to Tunnel
 	c.log.Infof("🔍 <yellow>DNS Query Request: %s (%d)</yellow>", question.Name, question.Type)
 	c.dispatchDNSQueryToTunnel(query)
+	if c.localDNSCache != nil {
+		c.waitDNSReply(dnsCache.BuildKey(question.Name, question.Type, question.Class), query, respond)
+	}
 	return false
+}
+
+func (c *Client) waitDNSReply(key string, query []byte, respond func([]byte)) {
+	if respond == nil || c.localDNSCache == nil {
+		return
+	}
+	if c.dnsReplyWaiters.Add(1) > 128 {
+		c.dnsReplyWaiters.Add(-1)
+		return
+	}
+	query = append([]byte(nil), query...)
+	go func() {
+		defer c.dnsReplyWaiters.Add(-1)
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.NewTimer(8 * time.Second)
+		defer timeout.Stop()
+		for {
+			select {
+			case <-timeout.C:
+				return
+			case now := <-ticker.C:
+				if reply, ok := c.localDNSCache.GetReady(key, query, now); ok {
+					respond(reply)
+					return
+				}
+			}
+		}
+	}()
 }
 
 func (c *Client) dispatchDNSQueryToTunnel(query []byte) {

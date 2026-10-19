@@ -44,6 +44,13 @@ func (c *Client) resolverRuntimeSnapshot() (active, standby, valid []string) {
 	}
 	c.mtuStateMu.Lock()
 	defer c.mtuStateMu.Unlock()
+	// Discovery owns these records under mtuStateMu, while balancer updates
+	// validity, MTU and backup fields under its own lock. Snapshot readers need
+	// both, in the same order as discovery, even when copying unused fields.
+	if c.balancer != nil {
+		c.balancer.mu.Lock()
+		defer c.balancer.mu.Unlock()
+	}
 	seenActive := make(map[string]struct{}, len(c.connections))
 	seenValid := make(map[string]struct{}, len(c.connections))
 	for _, conn := range c.connections {
