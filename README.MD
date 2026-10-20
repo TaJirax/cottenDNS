@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-16a34a?style=flat-square"></a>
   <a href="https://github.com/TaJirax/cottenDNS/actions/workflows/build-go.yml"><img alt="Build and release" src="https://github.com/TaJirax/cottenDNS/actions/workflows/build-go.yml/badge.svg"></a>
   <a href="https://github.com/TaJirax/cottenDNS/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/TaJirax/cottenDNS?style=flat-square"></a>
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.26.5-00ADD8?style=flat-square&logo=go&logoColor=white">
   <img alt="DNS transports" src="https://img.shields.io/badge/DNS-UDP%20%7C%20TCP%20%7C%20DoT%20%7C%20DoH-4f46e5?style=flat-square">
 </p>
 
@@ -36,10 +36,63 @@
 > [!IMPORTANT]
 > CottenDNS exists for networks where ordinary VPNs and proxies are blocked but a usable DNS path remains. DNS tunneling is inherently slower than a normal VPN. The goal is maximum usable speed and continuity under censorship—not unrealistic clean-network throughput claims.
 
+<a id="cottenmax-beta"></a>
+
+## CottenMax beta
+
+**CottenMax is now available for opt-in beta testing inside CottenDNS.** The beta source is on `main` in both [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) and [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main). **No CottenMax release has been published yet.** The normal download links and the server installer's default/`--upgrade` commands fetch published releases; updating the installer script alone does not install this unpublished beta.
+
+### Beta desktop and Android clients
+
+| Client | CI debug build | Source and build history |
+| --- | --- | --- |
+| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39496092467/artifacts/12298076386) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
+| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39495252224/artifacts/12298456373) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+
+These are temporary GitHub Actions artifacts, not releases; downloading may require a GitHub sign-in. If an artifact is unavailable, check that repository's Actions history. Install a matching Max-capable **server and client**. An older server cannot serve a Max client.
+
+In the desktop or Android CottenDNS profile, choose **Normal / CottenMax beta**, save, then reconnect. In a terminal client, set the existing profile's `TUNNEL_MODE = "cottenmax"` and restart. To return to normal mode, select Normal or set `TUNNEL_MODE = "legacy"`, then reconnect. Existing connections do not change engines in place.
+
+Keep the **same domain, profile and shared key**. Max is a module inside CottenDNS, with no second service, config file or key transfer. An updated server accepts both client modes together on its existing listeners, even with the server's default `TUNNEL_MODE = "legacy"`. Keep `encrypt_key.txt`, and do not add the internal `cottenmax-v1.` prefix to your configured domain. Very long domains may not fit Max's handshake; check the server's Max readiness message and use a short delegated domain.
+
+### Fresh standalone Linux beta server from source
+
+The installation steps here are for **standalone servers only**. For a **new** Linux amd64/arm64 server with systemd, install Git and Go **1.26.5** first, prepare the DNS delegation described below, then build only the server:
+
+```bash
+git clone --branch main --single-branch https://github.com/WhiteDNS/CottenDNS.git cottendns-beta
+cd cottendns-beta
+go build -trimpath -o "CottenDns_Server_Linux_$(go env GOARCH)_beta" ./cmd/server
+sudo bash server_linux_install.sh --local
+systemctl status cottendns --no-pager
+journalctl -u cottendns -n 60 --no-pager
+```
+
+The installer uses the local binary and source config template, asks for the tunnel domain and initializes the existing shared-key setup. Keep this directory: the service runs from it. Confirm the **CottenMax available alongside normal CottenDNS** log message before asking clients to switch.
+
+**Existing standalone server:** back up the current server binary, `server_config.toml` and `encrypt_key.txt` outside the installation directory for rollback. Build in a separate checkout and stop `cottendns` before copying over a running executable with the same filename. Copy only the new server binary, current `server_linux_install.sh` and `server_config.toml.simple` into the current service's installation directory, then run `sudo bash server_linux_install.sh --local` **from that directory**. This preserves the active config/key and places new defaults in `server_config.toml.dist`. Do not replace your active config with the template or install from a fresh checkout that lacks your original key. `--upgrade` and `--local` cannot be combined; `--upgrade` currently selects a published release, not this source beta.
+
+**CottenRouter-managed server:** follow the [Router beta guide](https://github.com/WhiteDNS/CottenRouter#cottenmax-beta). Replace the backend binary through its existing managed service, preserving that unit, working directory, config/key and private loopback ports. **Do not run this standalone installer** for a Router backend: it frees public port 53 and can interrupt Router routing.
+
+### What changes in Max
+
+| Area | Max beta behavior |
+| --- | --- |
+| Startup and recovery | Soar-derived adaptive sizes/windows, held polls, multipath congestion control and retransmission; UDP/TCP recovery with `RESOLVER_TRANSPORT = "auto"`. |
+| Encryption | The pinned [Soar v0.2.3](https://github.com/getlantern/soar/tree/v0.2.3) ChaCha20-Poly1305 construction with an 8-byte authentication tag and fresh session keys; no extra legacy AES layer. Max uses this cipher independently of normal-mode cipher selection. |
+| Encrypted resolver options | Explicit `dot`, `doh`, `doh3` (HTTP/3) or `doq`; compatible resolver and verified TLS required. These protect the **client-to-resolver hop**, and do not add HTTP/3/DoQ listeners to the authoritative server. Max does not silently fall back from encrypted DNS to plaintext; optional HTTP/3 fallback stays on TLS DoH. |
+| Optional controls | Encrypted-hop EDNS padding, resolver discovery/cache, QNAME label-count shaping and lazy backup-domain failover are opt-in. Start with defaults. |
+| Important limits | Normal-mode compression/FEC/duplication/controller settings do not control Max. Hard `QUERY_RATE_LIMIT_*` budgets and SOCKS UDP ASSOCIATE require normal mode. |
+
+The beta still needs real-device, mobile-network, long-session and censored-network feedback; local results do not establish speed or reachability on your ISP. Keep normal mode as a fallback. When reporting an issue, include mode, client build, server version, transport, device/network and sanitized logs; never post your shared key.
+
+See [Max options and limits](docs/COTTENMAX_OPTIONS.md), [terminal setup/help](docs/COTTENMAX_BETA_TERMINAL.md), [Soar attribution](SOAR_LICENSE.txt) and [third-party notices](THIRD_PARTY_NOTICES.md). The setup guide below describes published releases and normal-mode features unless stated otherwise.
+
 ## Start here
 
 | I want to… | Go to |
 | --- | --- |
+| Try CottenMax beta | [Beta builds and server setup](#cottenmax-beta) |
 | Deploy a new tunnel | [Complete setup guide](#complete-setup-guide) |
 | Add IPv6 and automatic fallback | [IPv4 and IPv6 setup](#ipv4-and-ipv6-setup) |
 | Harden a public server | [Flood and abuse protection](#flood-and-abuse-protection) |
@@ -52,6 +105,8 @@
 | Review every configuration option | [Client](client_config.toml.simple) and [server](server_config.toml.simple) samples |
 
 ### At a glance
+
+The reliability and controller rows below describe normal (`legacy`) mode. Max uses its own engine, described [above](#cottenmax-beta).
 
 | Component | Purpose | Normal default |
 | --- | --- | --- |
@@ -69,6 +124,8 @@ CottenDNS stands on the work of two projects and their maintainers:
 1. **[MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN)** by **Amin Mahmoudi** established the low-overhead DNS tunnel, custom ARQ, resolver balancing, session multiplexing, and harsh-network design used by this project.
 2. **[StormDNS](https://github.com/nullroute1970/StormDNS)** by **NullRoute1970** continued that work and is the direct upstream lineage from which CottenDNS was derived.
 3. **CottenDNS**, maintained by **tajirax**, extends that foundation while retaining compatibility with MasterDNS/StormDNS clients.
+
+The optional **CottenMax** module incorporates the [Soar](https://github.com/getlantern/soar) v0.2.3 engine by **getlantern**, with local integration and recovery changes; see [SOAR_LICENSE.txt](SOAR_LICENSE.txt) and the [engine modification notice](internal/cottenmax/engine/NOTICE.cottendns.txt).
 
 Their work deserves full credit. CottenDNS is an independent derivative, not a claim that the underlying architecture began here. All three projects preserve the MIT license lineage; see [LICENSE](LICENSE).
 
@@ -91,11 +148,13 @@ CottenDNS client
     └── DoH ────────┘
 ```
 
-The client splits streams into DNS-sized frames, encrypts and optionally compresses them, selects a resolver/transport path, and repairs loss with ARQ and optional Reed–Solomon FEC. The server reconstructs the streams and opens the requested connection directly, through an upstream SOCKS5 server, or toward a fixed TCP target.
+In normal mode, the client splits streams into DNS-sized frames, encrypts and optionally compresses them, selects a resolver/transport path, and repairs loss with ARQ and optional Reed–Solomon FEC. The server reconstructs the streams and opens the requested connection directly, through an upstream SOCKS5 server, or toward a fixed TCP target.
 
-The built-in SOCKS5 server supports normal TCP proxying and generic UDP associations. A local DNS listener/cache is optional.
+The built-in SOCKS5 server supports TCP proxying; generic UDP associations are a normal-mode feature. A local DNS listener/cache is optional in both modes.
 
 ## Why it is different
+
+This table describes the normal-mode controller and reliability system; see [the beta comparison](#cottenmax-beta) for Max.
 
 | Network problem | CottenDNS response |
 | --- | --- |
@@ -113,7 +172,7 @@ The built-in SOCKS5 server supports normal TCP proxying and generic UDP associat
 
 ## Automatic behavior
 
-The recommended defaults enable the smart client controller:
+In normal (`legacy`) mode, the recommended defaults enable the smart client controller:
 
 ```toml
 CONFIG_PRESET = "speed"
@@ -140,7 +199,7 @@ With these settings the client automatically:
 RESOLVER_TRANSPORT = "dot" # or "doh"
 ```
 
-If an encrypted resolver transport fails, its survival chain can return to UDP/53 and TCP/53. You may also override individual resolvers:
+In normal mode, the existing DoT/DoH survival chain can return to UDP/53 and TCP/53. Max keeps explicitly encrypted resolver transports encrypted. The following per-resolver policy belongs to the normal-mode controller:
 
 ```toml
 RESOLVER_TRANSPORT_PATHS = { "1.1.1.1" = "doh", "8.8.8.8" = "auto", "9.9.9.9" = "tcp" }
@@ -148,7 +207,7 @@ RESOLVER_TRANSPORT_PATHS = { "1.1.1.1" = "doh", "8.8.8.8" = "auto", "9.9.9.9" = 
 
 ## Dynamic server
 
-The server feeds UDP, TCP/53, DoT, and DoH into the same native session engine. It does not require a separate session protocol for each carrier.
+The updated server dispatches normal and Max traffic on its existing listeners. UDP and TCP/53 work by default; optional DoT/DoH listeners require separate configuration. Normal-mode cipher auto-detection below is separate from Max's authenticated protocol.
 
 With the default:
 
@@ -670,7 +729,7 @@ journalctl -u cottendns-client -f
 
 ### Safe upgrades
 
-Upgrade the server in place:
+Upgrade the server to a published release in place. This command does **not** fetch the unpublished Max source beta; use [the beta instructions](#cottenmax-beta) for that:
 
 ```bash
 cd /opt/cottendns
@@ -739,8 +798,9 @@ Profiles are starting points, not hard-coded country detection. Real resolver be
 | `auto` | Recommended for almost everyone | Tries UDP first and compares UDP/TCP per resolver; it does not enable DoT/DoH |
 | `udp` | Debugging or a known clean UDP-only environment | Pins every unoverridden resolver to UDP and disables automatic TCP selection |
 | `tcp` | Networks where UDP/53 is consistently broken | Uses persistent DNS-over-TCP connections |
-| `dot` | Plain DNS is fingerprinted but port 853 works | Requires the server DoT listener and correct TLS trust settings |
-| `doh` | HTTPS-shaped DNS is the only reliable carrier | Requires the server DoH listener, route, and correct TLS trust settings |
+| `dot` | A compatible encrypted resolver path works | Requires correct TLS trust; a direct server connection also needs its optional DoT listener |
+| `doh` | A compatible HTTPS resolver path works | Requires correct TLS trust and DoH path; a direct server connection also needs its optional DoH listener |
+| `doh3` / `doq` | An explicitly chosen QUIC resolver path works | Client-to-recursive-resolver only; requires QUIC connectivity, compatible resolver and verified TLS |
 
 Prefer `auto` over forcing the entire pool to one transport. Per-resolver policy keeps fast UDP where it works while allowing only a damaged path to use TCP:
 
@@ -797,38 +857,21 @@ top -p "$pid"
 
 ## Android and engine embedding
 
-The Go networking engine is kept in this repository. Android applications can pin CottenDNS as a Git submodule or CI dependency and build the engine without copying it into the app repository.
+The Go networking engine is kept in this repository. The [Android](https://github.com/WhiteDNS/WhiteDNS-Android) and [desktop](https://github.com/WhiteDNS/WhiteDNS-Desktop) beta apps include updated cores and Normal/Max profile controls; use the [matching CI debug builds](#cottenmax-beta).
 
-Known-good engine commit:
-
-```text
-8eea49d1267b1a41441c25c75e69e6f12ad0a11f
-```
-
-The engine has been cross-compiled with CGO disabled for Android arm64, armv7, amd64, and 386. The Android wrapper should preserve the recommended defaults or pass equivalent TOML values.
-
-Example submodule update:
-
-```bash
-git submodule update --init --recursive
-cd path/to/cottenDNS
-git fetch origin
-git checkout 8eea49d1267b1a41441c25c75e69e6f12ad0a11f
-cd ..
-git add path/to/cottenDNS
-git commit -m "Update CottenDNS engine"
-```
+For another wrapper, pin a reviewed commit from the updated `main` branch and record it in your build manifest. An old engine pin will not acquire Max by updating only its configuration. Keep its mode selector inside the existing CottenDNS profile, preserve domain/key settings and reconnect after a mode change. Build the supported Android ABIs with the wrapper's current NDK/packaging workflow; a successful Go cross-build alone does not verify device compatibility.
 
 ## Compatibility
 
-- New client + new server: complete feature set.
+- Matching Max-capable beta client + server: opt-in Max and normal mode; check [beta limits](#cottenmax-beta).
+- New normal-mode client + new server: normal-mode feature set.
 - Old client + new server: supported, including MasterDNS/StormDNS-compatible clients.
-- New client + old server: most client-only routing improvements work, but current server hardening, monitoring, listeners, and policy features are unavailable.
+- New normal-mode client + old server: most client-only routing improvements work, but current server features are unavailable. Max requires a Max-capable server.
 - `PATH_CONTROLLER_MODE = "legacy"` restores the earlier client selector without changing the wire protocol.
 
 ## Security notes
 
-- Prefer AES-GCM method `3`, `4`, or `5` for authenticated encryption.
+- In normal mode, prefer AES-GCM method `3`, `4`, or `5` for authenticated encryption. Max uses its own authenticated ChaCha20-Poly1305 construction with Soar's 8-byte tag, independently of this setting.
 - XOR and ChaCha20 method `2` are retained for legacy compatibility; they do not authenticate frames.
 - DoT/DoH protects and disguises the client-to-resolver hop, not the resolver-to-authoritative-server hop.
 - DNS volume and timing can still reveal tunnel-like behavior. No plaintext DNS tunnel is invisible to a capable observer.
@@ -883,6 +926,8 @@ Confirm `ENCRYPTION_AUTO_DETECT = true`, use the same encryption key, and do not
 
 | Document | Purpose |
 | --- | --- |
+| [CottenMax beta options](docs/COTTENMAX_OPTIONS.md) | Mode switching, resolver transports, optional controls and limits |
+| [CottenMax terminal guide](docs/COTTENMAX_BETA_TERMINAL.md) | Client dashboard help, server readiness and installer guidance |
 | [Configuration presets](CONFIG_PRESETS.md) | Recommended speed/survival profiles and regional starting points |
 | [Engineering changes](docs/ENGINEERING_CHANGES.md) | Protocol decisions, failure handling, tests, and measured results |
 | [Client sample](client_config.toml.simple) | Complete client configuration reference |
@@ -891,7 +936,7 @@ Confirm `ENCRYPTION_AUTO_DETECT = true`, use the same encryption key, and do not
 
 ## Build and test
 
-Requirements: Go 1.25 or compatible current Go toolchain.
+Requirements: Go 1.26 or newer; Go **1.26.5** was used for the current beta builds. See `go.mod` for the required language version.
 
 ```bash
 go build ./cmd/client
