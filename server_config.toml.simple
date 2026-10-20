@@ -16,6 +16,13 @@
 # - Defines label policy and allowed compression negotiation.
 # ------------------------------------------------------------------------------
 
+# Normal CottenDNS and CottenMax share this configuration, listener and existing
+# encryption credential. Clients select their mode; no server switch is needed.
+# TUNNEL_MODE remains readable for compatibility with older configurations.
+TUNNEL_MODE = "legacy"
+# Old experimental COTTENMAX_KEY_FILE settings remain readable for migration.
+# New installations do not create a separate Max identity or public-key file.
+
 # Tunnel domains handled by this server.
 # Must match client DOMAINS.
 DOMAIN = ["v.domain.com"]
