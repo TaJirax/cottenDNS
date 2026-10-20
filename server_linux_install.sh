@@ -182,6 +182,11 @@ print_usage() {
   cat <<'USAGE'
 CottenDns Server Linux Installer
 
+CottenMax beta is a mode inside CottenDNS. A compatible server serves Normal
+and Max on the same listeners, domain and shared key. Clients choose their mode.
+Use --version with a published beta tag, or --local with the beta server bundle.
+The latest stable release may not include CottenMax yet.
+
 Usage:
   bash <(curl -Ls https://raw.githubusercontent.com/WhiteDNS/CottenDns/main/server_linux_install.sh) [OPTIONS]
 
@@ -1019,6 +1024,21 @@ fi
 rm -f "$SVC_BACKUP" 2>/dev/null || true
 
 log_success "CottenDns service is running and healthy."
+
+log_header "Client Modes & CottenMax Beta"
+BINARY_HELP="$(./"$EXECUTABLE" --help 2>&1 || true)"
+if grep -q 'CottenMax' <<< "$BINARY_HELP"; then
+  log_info "This server accepts Normal CottenDNS and CottenMax beta together."
+  log_info "Keep the same delegated domain and shared encryption key in your client profile."
+  log_info 'Choose Normal / CottenMax (beta) in Desktop or Android, or set client TUNNEL_MODE = "cottenmax".'
+  log_info "Reconnect the client after switching. No server mode change or extra Max key is needed."
+  log_info 'Fallback: choose Normal, or set client TUNNEL_MODE = "legacy", then reconnect.'
+else
+  log_warn "This binary does not advertise CottenMax support. Keep clients in Normal mode."
+  log_info "To test Max, install a compatible beta server and matching client builds first."
+fi
+log_info "Optional Max tuning lives in the existing config. Keep defaults for a first connection."
+
 UPGRADE_COMPLETED=true
 
 log_info "Cleaning up old server binaries..."
