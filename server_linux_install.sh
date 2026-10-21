@@ -184,8 +184,8 @@ CottenDns Server Linux Installer
 
 CottenMax beta is a mode inside CottenDNS. A compatible server serves Normal
 and Max on the same listeners, domain and shared key. Clients choose their mode.
-Use --version with a published beta tag, or --local with the beta server bundle.
-The latest stable release may not include CottenMax yet.
+The default installs the current compatible release. Use --version for an exact
+release tag, or --local for a locally built server bundle.
 
 Usage:
   bash <(curl -Ls https://raw.githubusercontent.com/WhiteDNS/CottenDns/main/server_linux_install.sh) [OPTIONS]

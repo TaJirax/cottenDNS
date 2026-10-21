@@ -25,14 +25,14 @@
 
 ## بتای اولیه CottenMax — موجود در شاخه `main`
 
-**CottenMax برای آزمایش اختیاری به CottenDNS اضافه شده است.** کد بتا در شاخه `main` هر دو مخزن [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) و [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main) قرار دارد. **هنوز Release جدیدی برای CottenMax منتشر نشده است.** لینک‌های دانلود معمولی و نصب‌کننده سرور در حالت پیش‌فرض یا `--upgrade` نسخه‌های منتشرشده را دریافت می‌کنند؛ به‌روزرسانی خود اسکریپت به‌تنهایی این بتا را نصب نمی‌کند.
+**CottenMax برای آزمایش اختیاری به CottenDNS اضافه شده است.** کد بتا در شاخه `main` هر دو مخزن [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) و [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main) قرار دارد. **[نسخه جدید سرور](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.123524-0f1d6f0) حالت Normal و CottenMax را با هم پشتیبانی می‌کند.** نصب جدید و `--upgrade` اکنون این نسخه سازگار را می‌گیرند؛ تنظیمات و کلید فعلی را نگه دارید. backend تحت مدیریت Router را با `sudo cottenrouter update --project cottendns` به‌روز کنید. Max در کلاینت همچنان بتای اختیاری است.
 
 ### کلاینت‌های بتای دسکتاپ و اندروید
 
 | کلاینت | خروجی debug در CI | کد و تاریخچه build |
 | --- | --- | --- |
-| دسکتاپ ویندوز | [دریافت artifact دیباگ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39590353595/artifacts/12341496106) | [مخزن دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| اندروید | [دریافت APKهای دیباگ](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39590470110/artifacts/12342666245) | [مخزن اندروید](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+| دسکتاپ ویندوز | [دریافت artifact دیباگ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | [مخزن دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
+| اندروید | [دریافت APKهای دیباگ](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39601488139/artifacts/12346602282) | [مخزن اندروید](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
 
 این فایل‌ها artifact موقت GitHub Actions هستند، نه Release؛ برای دانلود ممکن است ورود به حساب گیت‌هاب لازم باشد. اگر فایل دیگر در دسترس نبود، تاریخچه Actions همان مخزن را بررسی کنید. **سرور و کلاینت باید هر دو نسخه سازگار با Max باشند**؛ سرور قدیمی نمی‌تواند به کلاینت Max سرویس بدهد.
 
@@ -55,7 +55,7 @@ journalctl -u cottendns -n 60 --no-pager
 
 نصب‌کننده از باینری محلی و قالب تنظیمات همان کد استفاده می‌کند، دامنه تونل را می‌پرسد و کلید مشترک را آماده می‌کند. این پوشه را نگه دارید؛ سرویس از همین مسیر اجرا می‌شود. قبل از تغییر حالت کلاینت‌ها، پیام **CottenMax available alongside normal CottenDNS** را در لاگ بررسی کنید.
 
-**سرور مستقل از قبل نصب‌شده:** ابتدا برای بازگشت، از باینری فعلی، `server_config.toml` و `encrypt_key.txt` بیرون از پوشه نصب نسخه پشتیبان بگیرید. باینری جدید را در checkout جداگانه بسازید؛ اگر نام فایل جدید با فایل در حال اجرا یکسان است، قبل از کپی سرویس `cottendns` را متوقف کنید. سپس فقط باینری، `server_linux_install.sh` فعلی و `server_config.toml.simple` را به پوشه نصب سرویس موجود کپی کنید و **از همان پوشه** دستور `sudo bash server_linux_install.sh --local` را اجرا کنید. تنظیمات فعال و کلید حفظ می‌شوند و پیش‌فرض‌های جدید در `server_config.toml.dist` قرار می‌گیرند. قالب را روی تنظیمات فعال ننویسید و نصب را از checkout تازه‌ای که کلید اصلی شما را ندارد انجام ندهید. `--local` با `--upgrade` ترکیب نمی‌شود؛ `--upgrade` فعلاً Release منتشرشده را می‌گیرد، نه این بتای سورس.
+**سرور مستقل از قبل نصب‌شده:** ابتدا برای بازگشت، از باینری فعلی، `server_config.toml` و `encrypt_key.txt` بیرون از پوشه نصب نسخه پشتیبان بگیرید. باینری جدید را در checkout جداگانه بسازید؛ اگر نام فایل جدید با فایل در حال اجرا یکسان است، قبل از کپی سرویس `cottendns` را متوقف کنید. سپس فقط باینری، `server_linux_install.sh` فعلی و `server_config.toml.simple` را به پوشه نصب سرویس موجود کپی کنید و **از همان پوشه** دستور `sudo bash server_linux_install.sh --local` را اجرا کنید. تنظیمات فعال و کلید حفظ می‌شوند و پیش‌فرض‌های جدید در `server_config.toml.dist` قرار می‌گیرند. قالب را روی تنظیمات فعال ننویسید و نصب را از checkout تازه‌ای که کلید اصلی شما را ندارد انجام ندهید. `--local` با `--upgrade` ترکیب نمی‌شود؛ `--upgrade` آخرین Release سازگار منتشرشده را دریافت می‌کند.
 
 **سرور تحت مدیریت CottenRouter:** از [راهنمای بتای Router](https://github.com/TaJirax/CottenRouter#cottenmax-beta) پیروی کنید. باینری backend را از طریق همان سرویس مدیریت‌شده جایگزین کنید و unit، پوشه کاری، تنظیمات/کلید و پورت‌های خصوصی loopback را نگه دارید. **این نصب‌کننده مستقل را برای backend روتر اجرا نکنید**؛ پورت عمومی ۵۳ را آزاد می‌کند و می‌تواند مسیریابی Router را قطع کند.
 

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-16a34a?style=flat-square"></a>
   <a href="https://github.com/TaJirax/cottenDNS/actions/workflows/build-go.yml"><img alt="Build and release" src="https://github.com/TaJirax/cottenDNS/actions/workflows/build-go.yml/badge.svg"></a>
-  <a href="https://github.com/TaJirax/cottenDNS/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/TaJirax/cottenDNS?style=flat-square"></a>
+  <a href="https://github.com/WhiteDNS/CottenDNS/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/WhiteDNS/CottenDNS?style=flat-square"></a>
   <img alt="Go" src="https://img.shields.io/badge/Go-1.26.5-00ADD8?style=flat-square&logo=go&logoColor=white">
   <img alt="DNS transports" src="https://img.shields.io/badge/DNS-UDP%20%7C%20TCP%20%7C%20DoT%20%7C%20DoH-4f46e5?style=flat-square">
 </p>
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/TaJirax/cottenDNS/releases/latest">Download</a> ·
+  <a href="https://github.com/WhiteDNS/CottenDNS/releases/latest">Download</a> ·
   <a href="docs/ENGINEERING_CHANGES.md">Engineering notes</a> ·
   <a href="CONFIG_PRESETS.md">Configuration presets</a> ·
   <a href="https://t.me/whitedns">Telegram</a>
@@ -40,14 +40,16 @@
 
 ## CottenMax beta
 
-**CottenMax is now available for opt-in beta testing inside CottenDNS.** The beta source is on `main` in both [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) and [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main). **No CottenMax release has been published yet.** The normal download links and the server installer's default/`--upgrade` commands fetch published releases; updating the installer script alone does not install this unpublished beta.
+**CottenMax is now available for opt-in beta testing inside CottenDNS.** The beta source is on `main` in both [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) and [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main). **The [current server release](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.123524-0f1d6f0) supports Normal and CottenMax together.** Fresh installs and `--upgrade` now fetch this compatible release. Preserve the existing config/key; Router-managed backends must use `sudo cottenrouter update --project cottendns`. Max remains an opt-in client beta.
+
+The clients now show UDP/TCP paths currently being tested and successful paths during scanning. Max reports connected after authenticated tunnel transfer verification. Recovery retries larger QNAMEs within one minute on a working path, and failed unauthenticated TCP links back off.
 
 ### Beta desktop and Android clients
 
 | Client | CI debug build | Source and build history |
 | --- | --- | --- |
-| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39590353595/artifacts/12341496106) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39590470110/artifacts/12342666245) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
+| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39601488139/artifacts/12346602282) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
 
 These are temporary GitHub Actions artifacts, not releases; downloading may require a GitHub sign-in. If an artifact is unavailable, check that repository's Actions history. Install a matching Max-capable **server and client**. An older server cannot serve a Max client.
 
@@ -55,7 +57,7 @@ In the desktop or Android CottenDNS profile, choose **Normal / CottenMax beta**,
 
 Keep the **same domain, profile and shared key**. Max is a module inside CottenDNS, with no second service, config file or key transfer. An updated server accepts both client modes together on its existing listeners, even with the server's default `TUNNEL_MODE = "legacy"`. Keep `encrypt_key.txt`, and do not add the internal `cottenmax-v1.` prefix to your configured domain. Very long domains may not fit Max's handshake; check the server's Max readiness message and use a short delegated domain.
 
-### Fresh standalone Linux beta server from source
+### Optional standalone Linux server build from source
 
 The installation steps here are for **standalone servers only**. For a **new** Linux amd64/arm64 server with systemd, install Git and Go **1.26.5** first, prepare the DNS delegation described below, then build only the server:
 
@@ -625,7 +627,7 @@ disconnects clients that use it.
 
 ### Step 4 — Download the correct client
 
-Open [Releases](https://github.com/TaJirax/cottenDNS/releases/latest) and choose the archive matching the client machine:
+Open [Releases](https://github.com/WhiteDNS/CottenDNS/releases/latest) and choose the archive matching the client machine:
 
 | Platform | Typical archive |
 | --- | --- |
