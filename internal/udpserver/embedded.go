@@ -22,7 +22,7 @@ type EmbeddedConfig struct {
 	DialContext func(context.Context, string, string) (net.Conn, error)
 	ExchangeDNS func(context.Context, []byte) ([]byte, error)
 	Allowed     func() bool
-	// Zero preserves the existing per-account defaults. The embedding panel
+	// Zero selects 64 sessions and 128 streams per session. The embedding panel
 	// must select explicit limits for shared profiles; these are not user counts.
 	MaxActiveSessions, MaxStreamsPerSession int
 }
@@ -65,7 +65,7 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
 	cfg.DataEncryptionMethod, cfg.EncryptionAutoDetect = 5, false
 	cfg.TCPListenerEnabled, cfg.UDPIPv6Enabled, cfg.TCPIPv6Enabled = false, false, false
 	cfg.MinVPNLabelLength = 1
-	cfg.MaxActiveSessions, cfg.MaxStreamsPerSession = 8, 128
+	cfg.MaxActiveSessions, cfg.MaxStreamsPerSession = 64, 128
 	if in.MaxActiveSessions > 0 {
 		cfg.MaxActiveSessions = in.MaxActiveSessions
 	}
