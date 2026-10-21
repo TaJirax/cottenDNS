@@ -55,7 +55,9 @@ In CottenRouter's CottenDNS install/edit form, choose **expanded** in
 command. This explicitly raises minimum server limits to 4096 sessions,
 1024 normal streams/session and 512 Max streams/session. It preserves higher
 custom limits. The Router TCP ceiling rises to at least 512, with 64 per source
-IP; backend TCP limits rise to at least 1024 total and 128 per loopback source.
+IP; backend TCP limits rise to at least 1024 total and 512 per loopback source.
+The backend sees Router's loopback address for every forwarded TCP connection;
+its per-IP allowance therefore covers the full public Router connection budget.
 Keep the form's existing domains and transport choices when configuring.
 Leaving **keep** preserves existing capacity values, including on updates.
 
