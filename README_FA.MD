@@ -31,8 +31,8 @@
 
 | کلاینت | خروجی debug در CI | کد و تاریخچه build |
 | --- | --- | --- |
-| دسکتاپ ویندوز | [دریافت artifact دیباگ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39582214192/artifacts/12338600003) | [مخزن دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| اندروید | [دریافت APKهای دیباگ](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39582513479/artifacts/12339120389) | [مخزن اندروید](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+| دسکتاپ ویندوز | [دریافت artifact دیباگ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39590353595/artifacts/12341496106) | [مخزن دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
+| اندروید | [دریافت APKهای دیباگ](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39590470110/artifacts/12342666245) | [مخزن اندروید](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
 
 این فایل‌ها artifact موقت GitHub Actions هستند، نه Release؛ برای دانلود ممکن است ورود به حساب گیت‌هاب لازم باشد. اگر فایل دیگر در دسترس نبود، تاریخچه Actions همان مخزن را بررسی کنید. **سرور و کلاینت باید هر دو نسخه سازگار با Max باشند**؛ سرور قدیمی نمی‌تواند به کلاینت Max سرویس بدهد.
 

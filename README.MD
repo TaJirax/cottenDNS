@@ -46,8 +46,8 @@
 
 | Client | CI debug build | Source and build history |
 | --- | --- | --- |
-| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39582214192/artifacts/12338600003) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39582513479/artifacts/12339120389) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39590353595/artifacts/12341496106) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
+| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39590470110/artifacts/12342666245) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
 
 These are temporary GitHub Actions artifacts, not releases; downloading may require a GitHub sign-in. If an artifact is unavailable, check that repository's Actions history. Install a matching Max-capable **server and client**. An older server cannot serve a Max client.
 
