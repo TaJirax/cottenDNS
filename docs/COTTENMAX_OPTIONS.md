@@ -32,7 +32,7 @@ are not deleted. Normal-mode cipher settings/defaults have not changed.
 
 | Option | Implemented behavior | Default |
 | --- | --- | --- |
-| Encrypted resolver coverage | Normal and Max support explicit DoT, DoH, DoH over HTTP/3, and DoQ. | `RESOLVER_TRANSPORT = "auto"`: ordinary UDP with TCP fallback; encrypted transports are explicit. |
+| Resolver transports | Normal and Max support UDP, TCP, explicit DoT, DoH, HTTP/3 and DoQ. Max Auto probes UDP/TCP independently and both can carry live traffic. | `RESOLVER_TRANSPORT = "auto"`; encrypted transports remain explicit. |
 | HTTP/3 fallback | Optional fallback from HTTP/3 to TLS-protected DoH; never to plaintext DNS. | `RESOLVER_HTTP3_FALLBACK = false` |
 | EDNS query padding | Pads queries in encrypted resolver modes only; does not request padded responses. | `DNS_PADDING_BLOCK_SIZE = 0` (off) |
 | Custom resolver ports | UDP/TCP entries retain distinct ports on the same IP; exact duplicate endpoints collapse. | Omitted entry port means 53. |
@@ -53,6 +53,51 @@ The resolver must actually support the chosen protocol/port and forward the
 tunnel zone. Many resolver IPs can share one upstream or rate limit. Test the
 authenticated tunnel from the affected connection rather than assuming a
 successful ordinary DNS lookup proves the path.
+
+## UDP/TCP connections and authenticated MTU scans
+
+With `TUNNEL_MODE = "cottenmax"`, `RESOLVER_TRANSPORT = "auto"` creates
+independent UDP and TCP DNS paths for each configured or discovered resolver.
+Both carry the actual tunnel streams into the existing device proxy; this does
+not add application UDP proxying. A working UDP path does not hide a TCP-only
+resolver elsewhere in the pool. Authentication, congestion windows, query-name
+capacity and answer-size learning stay separate for each transport. The live
+scheduler selects paths using delivered replies, latency, loss and available
+window, and recovers in-flight stream data when a path fails.
+
+Select `"udp"` or `"tcp"` to test or pin one DNS transport. Explicit encrypted
+resolver modes retain their protocol and TLS verification; they never acquire
+plaintext UDP/TCP siblings. Concurrent TCP/TLS handshakes are bounded, and the
+local proxy starts without waiting for a full scan. A short startup handshake
+learns usable paths immediately instead of waiting for the first proxy request.
+
+The standalone scan now supports Max:
+
+```bash
+./client -config client_config.toml -resolvers client_resolvers.txt -scan-only
+```
+
+In Auto mode it tests both transports per resolver with separate deadlines and
+sessions. It authenticates the server, verifies a small byte-exact transfer,
+then sends a bounded sizing transfer. Update the beta server too: its internal
+authenticated probe endpoint needs no new service, key or outbound connection.
+The scan opens no local proxy or DNS listener. Existing clients can still use
+ordinary Max streams with the updated server.
+
+`WD_SCAN event=path` reports `transport`, `authenticated`, `transfer_verified`,
+`qname_bytes` and `answer_bytes`. Sizes are conservative **observed DNS wire
+sizes**, not plaintext application MTUs or a claim that every configured
+ceiling was reached. Runtime sizing continues to adapt on real traffic. A slow
+path that passes the small transfer remains usable if its sizing deadline runs
+out. A handshake alone does not count as a usable scan result.
+
+Resolver totals count each endpoint once if either selected transport works.
+Discovery's desired resolver count and candidate concurrency also count distinct
+endpoints, while keeping their UDP/TCP capabilities separate. Scans use the
+configured resolver parallelism, capped at 16 simultaneous path probes; normal
+startup continues without this scan. Desktop's CottenDNS scanner uses the selected
+Normal/Max settings and resolver transport. Android's scanner preserves the
+profile's mode and optional Max settings.
 
 ## Encrypted resolver examples
 

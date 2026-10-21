@@ -78,7 +78,7 @@ The installer uses the local binary and source config template, asks for the tun
 
 | Area | Max beta behavior |
 | --- | --- |
-| Startup and recovery | Soar-derived adaptive sizes/windows, held polls, multipath congestion control and retransmission; UDP/TCP recovery with `RESOLVER_TRANSPORT = "auto"`. |
+| Startup and recovery | Soar-derived adaptive sizes/windows, held polls, multipath congestion control and retransmission; independently probed UDP/TCP DNS paths carry live traffic with `RESOLVER_TRANSPORT = "auto"`. |
 | Encryption | The pinned [Soar v0.2.3](https://github.com/getlantern/soar/tree/v0.2.3) ChaCha20-Poly1305 construction with an 8-byte authentication tag and fresh session keys; no extra legacy AES layer. Max uses this cipher independently of normal-mode cipher selection. |
 | Encrypted resolver options | Explicit `dot`, `doh`, `doh3` (HTTP/3) or `doq`; compatible resolver and verified TLS required. These protect the **client-to-resolver hop**, and do not add HTTP/3/DoQ listeners to the authoritative server. Max does not silently fall back from encrypted DNS to plaintext; optional HTTP/3 fallback stays on TLS DoH. |
 | Optional controls | Encrypted-hop EDNS padding, resolver discovery/cache, QNAME label-count shaping and lazy backup-domain failover are opt-in. Start with defaults. |
@@ -87,6 +87,8 @@ The installer uses the local binary and source config template, asks for the tun
 The beta still needs real-device, mobile-network, long-session and censored-network feedback; local results do not establish speed or reachability on your ISP. Keep normal mode as a fallback. When reporting an issue, include mode, client build, server version, transport, device/network and sanitized logs; never post your shared key.
 
 See [Max options and limits](docs/COTTENMAX_OPTIONS.md), [terminal setup/help](docs/COTTENMAX_BETA_TERMINAL.md), [Soar attribution](SOAR_LICENSE.txt) and [third-party notices](THIRD_PARTY_NOTICES.md). The setup guide below describes published releases and normal-mode features unless stated otherwise.
+
+Max also supports `client -config client_config.toml -resolvers client_resolvers.txt -scan-only`. Auto tests UDP and TCP independently, verifies data transfer and reports separate observed DNS wire sizes while counting each resolver once. Use the updated beta server for its internal scan probe. The same paths carry real traffic into the existing device proxy; see [transport and scanning details](docs/COTTENMAX_OPTIONS.md#udptcp-connections-and-authenticated-mtu-scans).
 
 ## Start here
 

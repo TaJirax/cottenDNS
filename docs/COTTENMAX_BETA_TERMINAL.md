@@ -33,6 +33,15 @@ services retain plain logs with the same setup guidance. `client --help` lists
 Max-specific constraints beside its generated configuration flags. CLI
 overrides affect that process only; edit the profile to persist a selection.
 
+Max Auto now authenticates independent UDP/TCP DNS paths at startup and uses
+them for live proxy traffic. Explicit `udp`/`tcp` pins one transport. Run
+`client -config client_config.toml -resolvers client_resolvers.txt -scan-only`
+for an authenticated scan of both paths in Auto mode, without starting the
+proxy. The updated beta server supplies its bounded internal transfer probe.
+Results include separate observed query-name/reply sizes per transport and one
+final result per resolver. The dashboard and app logs show verified resolver
+endpoints and actual UDP/TCP path counts instead of a legacy-only balancer count.
+
 The server console explains the shared setup and client-side mode selection.
 After initialization, check its **CottenMax available alongside normal
 CottenDNS** readiness message. Long unsupported domains are reported and retain

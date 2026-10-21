@@ -1,6 +1,7 @@
 package client
 
 import (
+	"cottendns-go/internal/config"
 	"fmt"
 	"slices"
 	"strings"
@@ -41,6 +42,24 @@ func (c *Client) shouldEmitResolverRuntimeState(line string, now time.Time) bool
 func (c *Client) resolverRuntimeSnapshot() (active, standby, valid []string) {
 	if c == nil {
 		return nil, nil, nil
+	}
+	if c.cfg.TunnelMode == config.TunnelCottenMax {
+		seenActive, seenValid := make(map[string]bool), make(map[string]bool)
+		if engine := c.cottenMax.Load(); engine != nil {
+			for _, p := range engine.PathStats() {
+				if p.Verified && !seenValid[p.Resolver] {
+					seenValid[p.Resolver] = true
+					valid = append(valid, p.Resolver)
+				}
+				if p.Healthy && !seenActive[p.Resolver] {
+					seenActive[p.Resolver] = true
+					active = append(active, p.Resolver)
+				}
+			}
+		}
+		slices.Sort(active)
+		slices.Sort(valid)
+		return active, nil, valid
 	}
 	c.mtuStateMu.Lock()
 	defer c.mtuStateMu.Unlock()
