@@ -28,6 +28,8 @@
 
 <p align="center">
   <a href="https://github.com/WhiteDNS/CottenDNS/releases/latest">Download</a> ·
+  <a href="#beta-client-downloads">Beta client downloads</a> ·
+  <a href="docs/RELEASE_AND_UPDATE_2026-10-21.md">Latest release &amp; update notes</a> ·
   <a href="docs/ENGINEERING_CHANGES.md">Engineering notes</a> ·
   <a href="CONFIG_PRESETS.md">Configuration presets</a> ·
   <a href="https://t.me/whitedns">Telegram</a>
@@ -46,14 +48,20 @@ The clients now show UDP/TCP paths currently being tested and successful paths d
 
 Standalone Normal and CottenMax have a 2,048-session default, with no hidden eight-session cap. Router expanded capacity raises this to at least 4,096. The embedded runtime defaults to 64 sessions when the embedding application supplies no limit; an explicit administrator setting remains authoritative. Panel account limits are separate from standalone server capacity.
 
+<a id="beta-client-downloads"></a>
+
 ### Beta desktop and Android clients
 
-| Client | CI debug build | Source and build history |
-| --- | --- | --- |
-| Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39604706552/artifacts/12348436491) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+**Verified beta builds — 21 October 2026.** These support Normal and CottenMax on the current server release.
 
-These are temporary GitHub Actions artifacts, not releases; downloading may require a GitHub sign-in. If an artifact is unavailable, check that repository's Actions history. Install a matching Max-capable **server and client**. An older server cannot serve a Max client.
+| Client | Download | Installation | Beta source |
+| --- | --- | --- | --- |
+| Windows Desktop x64 | [Download beta ZIP](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | Extract the ZIP and run the EXE. | [Desktop beta branch](https://github.com/WhiteDNS/WhiteDNS-Desktop/tree/beta/cottenmax-20261021) |
+| Android | [Download debug APK ZIP](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39604706552/artifacts/12348436491) | Extract the ZIP and install `app-universal-debug.apk`, or the APK for your device's ABI. | [Android beta branch](https://github.com/WhiteDNS/WhiteDNS-Android/tree/beta/cottenmax-20261021) |
+
+These are temporary **GitHub Actions debug artifacts**, not stable app releases; downloading may require GitHub sign-in. If a link expires, check [Desktop Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) or [Android Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions). Install a matching Max-capable **server and client**. The [current server and terminal-client packages](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.140901-0a7a241) include the latest published core; an older server cannot serve a Max client.
+
+Read the [21 October release and update notes](docs/RELEASE_AND_UPDATE_2026-10-21.md) for first-response and recovery fixes, UDP/TCP scanning, session defaults, validation and separate standalone/Router update instructions. Begin testing with **Normal**, then select **CottenMax beta**, save and reconnect with DNS transport **Auto**. Keep the same domain and key.
 
 In the desktop or Android CottenDNS profile, choose **Normal / CottenMax beta**, save, then reconnect. In a terminal client, set the existing profile's `TUNNEL_MODE = "cottenmax"` and restart. To return to normal mode, select Normal or set `TUNNEL_MODE = "legacy"`, then reconnect. Existing connections do not change engines in place.
 
@@ -76,7 +84,7 @@ The installer uses the local binary and source config template, asks for the tun
 
 **Existing standalone server:** back up the current server binary, `server_config.toml` and `encrypt_key.txt` outside the installation directory for rollback. Build in a separate checkout and stop `cottendns` before copying over a running executable with the same filename. Copy only the new server binary, current `server_linux_install.sh` and `server_config.toml.simple` into the current service's installation directory, then run `sudo bash server_linux_install.sh --local` **from that directory**. This preserves the active config/key and places new defaults in `server_config.toml.dist`. Do not replace your active config with the template or install from a fresh checkout that lacks your original key. `--upgrade` and `--local` cannot be combined; `--upgrade` currently selects a published release, not this source beta.
 
-**CottenRouter-managed server:** follow the [Router beta guide](https://github.com/TaJirax/CottenRouter#cottenmax-beta). Replace the backend binary through its existing managed service, preserving that unit, working directory, config/key and private loopback ports. **Do not run this standalone installer** for a Router backend: it frees public port 53 and can interrupt Router routing.
+**CottenRouter-managed server:** run `sudo cottenrouter update --project cottendns`. Router independently resolves the latest published compatible server, verifies the installed version/capabilities and preserves the managed service, configuration/key and private loopback ports. Use [Router 1.2.21 or newer](https://github.com/TaJirax/CottenRouter/releases/latest) for the updated TUI and installer checks. **Do not run the standalone installer** for a Router backend: Router must retain public UDP/TCP port 53.
 
 ### What changes in Max
 

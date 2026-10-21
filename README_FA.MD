@@ -21,20 +21,30 @@
   <a href="https://t.me/whitedns">کانال تلگرام</a>
 </p>
 
+[یادداشت انتشار و راهنمای به‌روزرسانی ۲۱ اکتبر ۲۰۲۶](docs/RELEASE_AND_UPDATE_2026-10-21.md) · [دانلود کلاینت‌های بتا](#beta-client-downloads)
+
 <a id="cottenmax-beta"></a>
 
-## بتای اولیه CottenMax — موجود در شاخه `main`
+## بتای CottenMax — سرور منتشرشده و کلاینت‌های آزمایشی
 
-**CottenMax برای آزمایش اختیاری به CottenDNS اضافه شده است.** کد بتا در شاخه `main` هر دو مخزن [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) و [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main) قرار دارد. **[نسخه جدید سرور](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.123524-0f1d6f0) حالت Normal و CottenMax را با هم پشتیبانی می‌کند.** نصب جدید و `--upgrade` اکنون این نسخه سازگار را می‌گیرند؛ تنظیمات و کلید فعلی را نگه دارید. backend تحت مدیریت Router را با `sudo cottenrouter update --project cottendns` به‌روز کنید. Max در کلاینت همچنان بتای اختیاری است.
+**CottenMax برای آزمایش اختیاری به CottenDNS اضافه شده است.** کد بتا در شاخه `main` هر دو مخزن [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) و [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main) قرار دارد. **[نسخه جدید سرور](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.140901-0a7a241) حالت Normal و CottenMax را با هم پشتیبانی می‌کند.** نصب جدید و `--upgrade` اکنون این نسخه سازگار را می‌گیرند؛ تنظیمات و کلید فعلی را نگه دارید. backend تحت مدیریت Router را با `sudo cottenrouter update --project cottendns` به‌روز کنید. Max در کلاینت همچنان بتای اختیاری است.
+
+<a id="beta-client-downloads"></a>
 
 ### کلاینت‌های بتای دسکتاپ و اندروید
 
-| کلاینت | خروجی debug در CI | کد و تاریخچه build |
-| --- | --- | --- |
-| دسکتاپ ویندوز | [دریافت artifact دیباگ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | [مخزن دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| اندروید | [دریافت APKهای دیباگ](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39601488139/artifacts/12346602282) | [مخزن اندروید](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+**بیلدهای بتای تأییدشده — ۲۱ اکتبر ۲۰۲۶.** این نسخه‌ها حالت معمولی و CottenMax را با سرور فعلی پشتیبانی می‌کنند.
 
-این فایل‌ها artifact موقت GitHub Actions هستند، نه Release؛ برای دانلود ممکن است ورود به حساب گیت‌هاب لازم باشد. اگر فایل دیگر در دسترس نبود، تاریخچه Actions همان مخزن را بررسی کنید. **سرور و کلاینت باید هر دو نسخه سازگار با Max باشند**؛ سرور قدیمی نمی‌تواند به کلاینت Max سرویس بدهد.
+| کلاینت | دانلود | نصب | کد بتا |
+| --- | --- | --- | --- |
+| دسکتاپ ویندوز x64 | [دریافت ZIP بتا](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | فایل ZIP را باز و EXE را اجرا کنید. | [شاخهٔ بتای دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop/tree/beta/cottenmax-20261021) |
+| اندروید | [دریافت ZIP حاوی APKهای debug](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39604706552/artifacts/12348436491) | ZIP را باز و `app-universal-debug.apk` یا APK مناسب معماری دستگاه را نصب کنید. | [شاخهٔ بتای اندروید](https://github.com/WhiteDNS/WhiteDNS-Android/tree/beta/cottenmax-20261021) |
+
+این فایل‌ها **آرتیفکت موقت debug در GitHub Actions** هستند و انتشار پایدار برنامه نیستند. ممکن است برای دانلود ورود به GitHub لازم باشد. اگر لینک منقضی شد، [Actions دسکتاپ](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) یا [Actions اندروید](https://github.com/WhiteDNS/WhiteDNS-Android/actions) را بررسی کنید. **سرور و کلاینت باید هر دو سازگار با Max باشند.** [بسته‌های فعلی سرور و کلاینت ترمینال](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.140901-0a7a241) شامل آخرین هستهٔ منتشرشده هستند؛ سرور قدیمی نمی‌تواند به کلاینت Max سرویس بدهد.
+
+ابتدا اتصال **Normal** را بررسی کنید؛ سپس **CottenMax beta** و روش انتقال DNS برابر **Auto** را انتخاب، ذخیره و دوباره متصل شوید. دامنه و کلید فعلی را نگه دارید. [یادداشت انتشار و به‌روزرسانی](docs/RELEASE_AND_UPDATE_2026-10-21.md) شامل اصلاح اولین پاسخ DNS، بازیابی اتصال، اسکن UDP/TCP، سقف نشست‌ها و دستورهای جداگانهٔ به‌روزرسانی سرور مستقل و Router است.
+
+پیش‌فرض نشست در CottenDNS و CottenMax مستقل ۲۰۴۸ است؛ گزینهٔ اختیاری expanded در Router آن را حداقل به ۴۰۹۶ می‌رساند. پیش‌فرض هستهٔ تعبیه‌شدهٔ فعلی، در صورت تعیین‌نشدن مقدار، ۶۴ است. مقدار صریح مدیر و تنظیمات بالاتر موجود حفظ می‌شوند. به‌روزرسانی به‌تنهایی سقف سفارشی قبلی را افزایش نمی‌دهد.
 
 در پروفایل CottenDNS برنامه دسکتاپ یا اندروید، **Normal / CottenMax beta** را انتخاب، ذخیره و سپس دوباره متصل شوید. در کلاینت ترمینال، در همان پروفایل `TUNNEL_MODE = "cottenmax"` بگذارید و کلاینت را دوباره اجرا کنید. برای بازگشت، Normal یا `TUNNEL_MODE = "legacy"` را انتخاب و دوباره متصل شوید؛ اتصال‌های جاری درجا تغییر حالت نمی‌دهند.
 
@@ -57,7 +67,7 @@ journalctl -u cottendns -n 60 --no-pager
 
 **سرور مستقل از قبل نصب‌شده:** ابتدا برای بازگشت، از باینری فعلی، `server_config.toml` و `encrypt_key.txt` بیرون از پوشه نصب نسخه پشتیبان بگیرید. باینری جدید را در checkout جداگانه بسازید؛ اگر نام فایل جدید با فایل در حال اجرا یکسان است، قبل از کپی سرویس `cottendns` را متوقف کنید. سپس فقط باینری، `server_linux_install.sh` فعلی و `server_config.toml.simple` را به پوشه نصب سرویس موجود کپی کنید و **از همان پوشه** دستور `sudo bash server_linux_install.sh --local` را اجرا کنید. تنظیمات فعال و کلید حفظ می‌شوند و پیش‌فرض‌های جدید در `server_config.toml.dist` قرار می‌گیرند. قالب را روی تنظیمات فعال ننویسید و نصب را از checkout تازه‌ای که کلید اصلی شما را ندارد انجام ندهید. `--local` با `--upgrade` ترکیب نمی‌شود؛ `--upgrade` آخرین Release سازگار منتشرشده را دریافت می‌کند.
 
-**سرور تحت مدیریت CottenRouter:** از [راهنمای بتای Router](https://github.com/TaJirax/CottenRouter#cottenmax-beta) پیروی کنید. باینری backend را از طریق همان سرویس مدیریت‌شده جایگزین کنید و unit، پوشه کاری، تنظیمات/کلید و پورت‌های خصوصی loopback را نگه دارید. **این نصب‌کننده مستقل را برای backend روتر اجرا نکنید**؛ پورت عمومی ۵۳ را آزاد می‌کند و می‌تواند مسیریابی Router را قطع کند.
+**سرور تحت مدیریت CottenRouter:** از `sudo cottenrouter update --project cottendns` استفاده کنید. Router آخرین انتشار سازگار را مستقل از نسخهٔ خودش دریافت و نسخه و قابلیت‌ها را بررسی می‌کند؛ سرویس، تنظیمات، کلید و پورت‌های خصوصی حفظ می‌شوند. برای رابط و بررسی‌های نصب جدید از [Router 1.2.21 یا جدیدتر](https://github.com/TaJirax/CottenRouter/releases/latest) استفاده کنید. **نصب‌کنندهٔ مستقل را برای backend تحت مدیریت Router اجرا نکنید**؛ مالک پورت عمومی UDP/TCP 53 باید Router بماند.
 
 ### تفاوت‌های حالت Max
 
