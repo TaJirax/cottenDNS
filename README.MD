@@ -40,16 +40,18 @@
 
 ## CottenMax beta
 
-**CottenMax is now available for opt-in beta testing inside CottenDNS.** The beta source is on `main` in both [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) and [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main). **The [current server release](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.123524-0f1d6f0) supports Normal and CottenMax together.** Fresh installs and `--upgrade` now fetch this compatible release. Preserve the existing config/key; Router-managed backends must use `sudo cottenrouter update --project cottendns`. Max remains an opt-in client beta.
+**CottenMax is now available for opt-in beta testing inside CottenDNS.** The beta source is on `main` in both [WhiteDNS/CottenDNS](https://github.com/WhiteDNS/CottenDNS/tree/main) and [TaJirax/cottenDNS](https://github.com/TaJirax/cottenDNS/tree/main). **The [current server release](https://github.com/WhiteDNS/CottenDNS/releases/tag/v2026.10.21.140901-0a7a241) supports Normal and CottenMax together.** Fresh installs and `--upgrade` now fetch this compatible release. Preserve the existing config/key; Router-managed backends must use `sudo cottenrouter update --project cottendns`. Max remains an opt-in client beta.
 
 The clients now show UDP/TCP paths currently being tested and successful paths during scanning. Max reports connected after authenticated tunnel transfer verification. Recovery retries larger QNAMEs within one minute on a working path, and failed unauthenticated TCP links back off.
+
+Standalone Normal and CottenMax have a 2,048-session default, with no hidden eight-session cap. Router expanded capacity raises this to at least 4,096. The embedded runtime defaults to 64 sessions when the embedding application supplies no limit; an explicit administrator setting remains authoritative. Panel account limits are separate from standalone server capacity.
 
 ### Beta desktop and Android clients
 
 | Client | CI debug build | Source and build history |
 | --- | --- | --- |
 | Windows desktop | [Download the debug artifact](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/39601468697/artifacts/12346273079) | [Desktop repository](https://github.com/WhiteDNS/WhiteDNS-Desktop) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions) |
-| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39601488139/artifacts/12346602282) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
+| Android | [Download the debug APK artifacts](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/39604706552/artifacts/12348436491) | [Android repository](https://github.com/WhiteDNS/WhiteDNS-Android) · [Actions](https://github.com/WhiteDNS/WhiteDNS-Android/actions) |
 
 These are temporary GitHub Actions artifacts, not releases; downloading may require a GitHub sign-in. If an artifact is unavailable, check that repository's Actions history. Install a matching Max-capable **server and client**. An older server cannot serve a Max client.
 
