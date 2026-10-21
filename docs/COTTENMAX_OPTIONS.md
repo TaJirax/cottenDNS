@@ -28,6 +28,44 @@ uses fresh X25519 keys and directional ChaCha20-Poly1305. Old explicit
 remove both old settings to adopt the single-credential setup. Existing files
 are not deleted. Normal-mode cipher settings/defaults have not changed.
 
+## Session and per-client capacity
+
+Normal CottenDNS and Max use the same server configuration. Session slots
+are tunnel sessions, not user accounts or a guarantee of simultaneous users.
+The existing shared credential does not identify individual people.
+
+`MAX_ACTIVE_SESSIONS` bounds each mode's session table; Max divides its budget
+across the configured Max domains. `MAX_STREAMS_PER_SESSION` controls normal
+streams and also bounds Max. Max additionally uses `COTTENMAX_MAX_STREAMS`
+(default **256**, allowed **1..512**). An updated client can use up to **512**
+Max streams, further limited by its existing `MAX_ACTIVE_STREAMS`. Older
+clients retain their old cap. No second key, service or configuration file
+is needed. Restart the server after changing limits and reconnect clients.
+
+For an intentional capacity increase on a standalone beta server:
+
+```toml
+MAX_ACTIVE_SESSIONS = 4096
+MAX_STREAMS_PER_SESSION = 4096
+COTTENMAX_MAX_STREAMS = 512
+```
+
+In CottenRouter's CottenDNS install/edit form, choose **expanded** in
+**Capacity**, or add `--expanded-capacity` to the existing install/configure
+command. This explicitly raises minimum server limits to 4096 sessions,
+1024 normal streams/session and 512 Max streams/session. It preserves higher
+custom limits. The Router TCP ceiling rises to at least 512, with 64 per source
+IP; backend TCP limits rise to at least 1024 total and 128 per loopback source.
+Keep the form's existing domains and transport choices when configuring.
+Leaving **keep** preserves existing capacity values, including on updates.
+
+Query-rate, byte, queue, idle-timeout and global Max stream budgets remain
+bounded and unchanged. Max's control queue reserves headroom for 512 streams;
+active session admission still rejects excess streams. A local test transferred
+byte-exact data over 300 simultaneous Max streams, above the former 256 cap.
+This does not establish a 4096-user load capacity. Monitor RAM, CPU, descriptors
+and rejection counters before increasing custom limits further.
+
 ## Useful options adopted from the two audits
 
 | Option | Implemented behavior | Default |

@@ -72,7 +72,7 @@ The installer uses the local binary and source config template, asks for the tun
 
 **Existing standalone server:** back up the current server binary, `server_config.toml` and `encrypt_key.txt` outside the installation directory for rollback. Build in a separate checkout and stop `cottendns` before copying over a running executable with the same filename. Copy only the new server binary, current `server_linux_install.sh` and `server_config.toml.simple` into the current service's installation directory, then run `sudo bash server_linux_install.sh --local` **from that directory**. This preserves the active config/key and places new defaults in `server_config.toml.dist`. Do not replace your active config with the template or install from a fresh checkout that lacks your original key. `--upgrade` and `--local` cannot be combined; `--upgrade` currently selects a published release, not this source beta.
 
-**CottenRouter-managed server:** follow the [Router beta guide](https://github.com/WhiteDNS/CottenRouter#cottenmax-beta). Replace the backend binary through its existing managed service, preserving that unit, working directory, config/key and private loopback ports. **Do not run this standalone installer** for a Router backend: it frees public port 53 and can interrupt Router routing.
+**CottenRouter-managed server:** follow the [Router beta guide](https://github.com/TaJirax/CottenRouter#cottenmax-beta). Replace the backend binary through its existing managed service, preserving that unit, working directory, config/key and private loopback ports. **Do not run this standalone installer** for a Router backend: it frees public port 53 and can interrupt Router routing.
 
 ### What changes in Max
 
