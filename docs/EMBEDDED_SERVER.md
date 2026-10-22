@@ -20,6 +20,18 @@ should create instances lazily because the protocol's session table has fixed
 per-instance memory overhead. It does not provide a multi-user database or a
 capacity guarantee. The standalone CLI retains its existing configuration.
 
+`server.Config.MaxActiveSessions` optionally sets the combined native and legacy
+session limit for an account. Zero retains the embedded default of 64;
+explicit values must be 1–65535. Native clients can use at most 65280 session IDs
+and legacy clients 255. This setting changes admission capacity, not the wire
+format or the per-session stream limit, and does not guarantee host capacity.
+
+`server.Config.MaxStreamsPerSession` optionally bounds data streams in each
+session. Zero retains the embedded default of 128; explicit values must be
+1–65535. The control stream (ID zero) is excluded, and existing streams remain
+usable when the limit is reached. Stream state is allocated as streams open.
+The caller owns aggregate egress limits across sessions and accounts.
+
 `cottendns-go/probe.CheckHTTP` runs the native client against an account and
 checks HTTPS through the tunnel. It takes credentials in memory, uses private
 temporary files and a loopback SOCKS listener, and cleans up after cancellation.
