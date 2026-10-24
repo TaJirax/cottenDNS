@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -66,6 +67,52 @@ func buildBinary(t *testing.T, root, pkg, outPath string) {
 	}
 }
 
+var (
+	binMu    sync.Mutex
+	binCache = map[string]string{}
+)
+
+// cachedBinary builds pkg once per test process; matrix runs reuse it.
+func cachedBinary(t *testing.T, root, pkg, name string) string {
+	t.Helper()
+	binMu.Lock()
+	defer binMu.Unlock()
+	if path, ok := binCache[pkg]; ok {
+		return path
+	}
+	dir, err := os.MkdirTemp("", "cottendns-e2e-bin")
+	if err != nil {
+		t.Fatalf("bin dir: %v", err)
+	}
+	path := filepath.Join(dir, binName(name))
+	buildBinary(t, root, pkg, path)
+	binCache[pkg] = path
+	return path
+}
+
+// lastKeyWins drops earlier "KEY = ..." lines when a later line sets the same
+// key, so a test's extra settings override the harness defaults (TOML rejects
+// duplicate keys).
+func lastKeyWins(cfg string) string {
+	lines := strings.Split(cfg, "\n")
+	seen := map[string]bool{}
+	for i := len(lines) - 1; i >= 0; i-- {
+		key, _, ok := strings.Cut(lines[i], "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" || strings.HasPrefix(key, "#") || strings.ContainsAny(key, " [") {
+			continue
+		}
+		if seen[key] {
+			lines[i] = ""
+		}
+		seen[key] = true
+	}
+	return strings.Join(lines, "\n")
+}
+
+// listenTimeout bounds how long a run waits for the client to come up.
+var listenTimeout = 150 * time.Second
+
 // freeUDPPort grabs an ephemeral UDP port and releases it for the server to bind.
 func freeUDPPort(t *testing.T) int {
 	return freeUDPPortForHost(t, "127.0.0.1")
@@ -88,6 +135,38 @@ func freeUDPPortForHost(t *testing.T, host string) int {
 	port := c.LocalAddr().(*net.UDPAddr).Port
 	_ = c.Close()
 	return port
+}
+
+// DNS serves UDP and TCP on the same port. On Windows a free UDP port can
+// belong to a TCP-excluded range; selecting it by UDP alone breaks TCP tests.
+func freeDNSPortForHost(t *testing.T, host string) int {
+	t.Helper()
+	tcpNetwork, udpNetwork := "tcp4", "udp4"
+	if strings.Contains(host, ":") {
+		tcpNetwork, udpNetwork = "tcp6", "udp6"
+	}
+	var lastErr error
+	for range 128 {
+		// Windows' TCP/UDP ephemeral allocators can repeatedly select a
+		// contiguous range excluded by the other transport. Spread candidates.
+		port := 20000 + rand.IntN(40000)
+		ln, err := net.Listen(tcpNetwork, net.JoinHostPort(host, fmt.Sprint(port)))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		addr := &net.UDPAddr{IP: net.ParseIP(host), Port: port}
+		pc, err := net.ListenUDP(udpNetwork, addr)
+		ln.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		pc.Close()
+		return port
+	}
+	t.Fatalf("could not allocate a port available to both DNS transports: %v", lastErr)
+	return 0
 }
 
 func freeTCPPort(t *testing.T) int {
@@ -293,19 +372,47 @@ func requireIPv6Loopback(t *testing.T) {
 }
 
 func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra, dnsHost string, resolverHosts ...string) string {
+	return runTunnelEchoVia(t, serverMethod, clientMethod, serverExtra, clientQueryTypes, clientExtra, dnsHost, tunnelBins{}, func(t *testing.T, server *net.UDPAddr) []string {
+		hosts := resolverHosts
+		if len(hosts) == 0 {
+			hosts = []string{dnsHost}
+		}
+		addrs := make([]string, 0, len(hosts))
+		for _, host := range hosts {
+			addrs = append(addrs, net.JoinHostPort(host, fmt.Sprintf("%d", server.Port)))
+		}
+		return addrs
+	})
+}
+
+// tunnelBins overrides the binaries under test (empty = build this tree), so
+// other releases can be run against the current one.
+type tunnelBins struct {
+	server, client string
+	// serverBase/clientBase replace the harness config with a shipped template;
+	// only what the harness needs (ports, key, forward target) is set on top.
+	serverBase, clientBase string
+}
+
+// runTunnelEchoVia is the harness; resolvers returns the client's resolver
+// list for the running server (direct, or proxies in front of it).
+func runTunnelEchoVia(t *testing.T, serverMethod, clientMethod int, serverExtra, clientQueryTypes, clientExtra, dnsHost string, bins tunnelBins, resolvers func(t *testing.T, server *net.UDPAddr) []string) string {
 	if clientQueryTypes == "" {
 		clientQueryTypes = `["TXT", "CNAME", "A", "AAAA"]`
 	}
 	root := repoRoot(t)
 	work := t.TempDir()
 
-	serverBin := filepath.Join(work, binName("server"))
-	clientBin := filepath.Join(work, binName("client"))
-	buildBinary(t, root, "./cmd/server", serverBin)
-	buildBinary(t, root, "./cmd/client", clientBin)
+	serverBin, clientBin := bins.server, bins.client
+	if serverBin == "" {
+		serverBin = cachedBinary(t, root, "./cmd/server", "server")
+	}
+	if clientBin == "" {
+		clientBin = cachedBinary(t, root, "./cmd/client", "client")
+	}
 
 	echoPort := startEchoServer(t)
-	udpPort := freeUDPPortForHost(t, dnsHost)
+	udpPort := freeDNSPortForHost(t, dnsHost)
 	clientPort := freeTCPPort(t)
 
 	serverCfg := filepath.Join(work, "server_config.toml")
@@ -313,7 +420,7 @@ func runTunnelEchoOnDNSHost(t *testing.T, serverMethod, clientMethod int, server
 	keyFile := filepath.Join(work, "encrypt_key.txt")
 
 	// Server: TCP mode, forwards every tunneled connection to the echo server.
-	if err := os.WriteFile(serverCfg, []byte(fmt.Sprintf(`
+	serverText := fmt.Sprintf(`
 PROTOCOL_TYPE = "TCP"
 UDP_HOST = %q
 UDP_PORT = %d
@@ -358,7 +465,12 @@ ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS = 120.0
 ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 %s
-`, dnsHost, udpPort, defaultLine(serverExtra, "DOMAIN", `DOMAIN = ["a.io"]`), serverMethod, echoPort, serverExtra)), 0644); err != nil {
+`, dnsHost, udpPort, defaultLine(serverExtra, "DOMAIN", `DOMAIN = ["a.io"]`), serverMethod, echoPort, serverExtra)
+	if bins.serverBase != "" {
+		serverText = fmt.Sprintf("%s\nPROTOCOL_TYPE = \"TCP\"\nUDP_HOST = %q\nUDP_PORT = %d\nDOMAIN = [\"a.io\"]\nDATA_ENCRYPTION_METHOD = %d\nENCRYPTION_KEY_FILE = \"encrypt_key.txt\"\nFORWARD_IP = \"127.0.0.1\"\nFORWARD_PORT = %d\n%s\n",
+			bins.serverBase, dnsHost, udpPort, serverMethod, echoPort, serverExtra)
+	}
+	if err := os.WriteFile(serverCfg, []byte(lastKeyWins(serverText)), 0644); err != nil {
 		t.Fatalf("write server cfg: %v", err)
 	}
 
@@ -379,19 +491,16 @@ ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS = 90.0
 	encryptionKey := strings.TrimSpace(string(keyData))
 
 	resolverFile := filepath.Join(work, "client_resolvers.txt")
-	if len(resolverHosts) == 0 {
-		resolverHosts = []string{dnsHost}
-	}
 	var resolverList strings.Builder
-	for _, host := range resolverHosts {
-		resolverList.WriteString(net.JoinHostPort(host, fmt.Sprintf("%d", udpPort)))
+	for _, addr := range resolvers(t, &net.UDPAddr{IP: net.ParseIP(dnsHost), Port: udpPort}) {
+		resolverList.WriteString(addr)
 		resolverList.WriteByte('\n')
 	}
 	if err := os.WriteFile(resolverFile, []byte(resolverList.String()), 0644); err != nil {
 		t.Fatalf("write resolvers: %v", err)
 	}
 
-	if err := os.WriteFile(clientCfg, []byte(fmt.Sprintf(`
+	clientText := fmt.Sprintf(`
 PROTOCOL_TYPE = "TCP"
 LISTEN_IP = "127.0.0.1"
 LISTEN_PORT = %d
@@ -454,7 +563,12 @@ ARQ_MAX_CONTROL_RETRIES = 300
 ARQ_DATA_NACK_INITIAL_DELAY_SECONDS = 0.35
 ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 %s
-`, clientPort, defaultLine(clientExtra, "DOMAINS", `DOMAINS = ["a.io"]`), encryptionKey, clientQueryTypes, clientMethod, clientExtra)), 0644); err != nil {
+`, clientPort, defaultLine(clientExtra, "DOMAINS", `DOMAINS = ["a.io"]`), encryptionKey, clientQueryTypes, clientMethod, clientExtra)
+	if bins.clientBase != "" {
+		clientText = fmt.Sprintf("%s\nPROTOCOL_TYPE = \"TCP\"\nLISTEN_IP = \"127.0.0.1\"\nLISTEN_PORT = %d\nDOMAINS = [\"a.io\"]\nENCRYPTION_KEY = %q\nQUERY_TYPES = %s\nDATA_ENCRYPTION_METHOD = %d\nTERMINAL_UI = \"plain\"\n%s\n",
+			bins.clientBase, clientPort, encryptionKey, clientQueryTypes, clientMethod, clientExtra)
+	}
+	if err := os.WriteFile(clientCfg, []byte(lastKeyWins(clientText)), 0644); err != nil {
 		t.Fatalf("write client cfg: %v", err)
 	}
 
@@ -470,7 +584,7 @@ ARQ_DATA_NACK_REPEAT_SECONDS = 0.8
 
 	// Generous: returns as soon as the client is up, but domain rotation needs
 	// two failed full scans first.
-	if err := waitForPattern(clientLog, "is listening", 150*time.Second); err != nil {
+	if err := waitForPattern(clientLog, "is listening", listenTimeout); err != nil {
 		t.Fatalf("client did not start listening: %v\n--- client log ---\n%s\n--- server log ---\n%s",
 			err, clientLog.String(), serverLog.String())
 	}

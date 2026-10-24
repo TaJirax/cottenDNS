@@ -720,6 +720,26 @@ Back up `server_config.toml` and `encrypt_key.txt` before uninstalling if the de
 
 </details>
 
+## Experimental CottenMax mode
+
+`TUNNEL_MODE = "legacy"` remains the default. An opt-in `"cottenmax"` mode
+experiments with safe startup, held polls, ephemeral session keys, and byte-range
+retransmission with implicit upload acknowledgements using an adapted Soar v0.2.3 engine.
+Max-enabled servers also serve legacy clients; max clients require an upgraded
+server. Both modes use the existing CottenDNS domain, configuration and encryption
+key; no additional Max key is required. Max is a mode inside CottenDNS in the
+desktop and Android clients. See [the experiment and local test instructions](docs/COTTENMAX_EXPERIMENT.md)
+for compatibility, current limitations, and measurements. The
+[options guide](docs/COTTENMAX_OPTIONS.md) covers verified DoH/HTTP3/DoQ, optional
+encrypted query padding, resolver discovery/cache, custom ports, label-count
+shaping and lazy domain/VPS failover. These share the existing profile/key and
+remain explicit options. This mode is not yet recommended as a general
+replacement for legacy.
+
+For DNS interception/rerouting, the expanded tests and opt-in authenticated DoT
+setup are documented in [DNS resilience](docs/IRAN_DNS_RESILIENCE.md). A working
+authenticated path is still required; changing resolver IPs alone cannot ensure it.
+
 ## Choose a profile
 
 | Profile | Use it when |
@@ -731,6 +751,27 @@ Back up `server_config.toml` and `encrypt_key.txt` before uninstalling if the de
 | `low-bandwidth` | Upload capacity and resolver query budgets are extremely limited |
 
 Profiles are starting points, not hard-coded country detection. Real resolver behavior varies by ISP, city, time, and censorship event. Explicit TOML values always override a preset. See [CONFIG_PRESETS.md](CONFIG_PRESETS.md).
+
+### Query rate limits
+
+Set the client's query budget in `client_config.toml`. The rate is user-defined:
+500, 1000, or higher are accepted, as are fractional rates such as 0.5. There is
+no fixed six-query cap. For example, to allow up to 500 outgoing queries/second:
+
+```toml
+QUERY_RATE_LIMIT_PER_SECOND = 500
+QUERY_RATE_LIMIT_PER_RESOLVER_PER_SECOND = 0
+QUERY_RATE_LIMIT_PER_DOMAIN_PER_SECOND = 0
+QUERY_RATE_LIMIT_BURST = 1
+```
+
+`0` disables that scope (the default). Enabled scopes stack, so a lower
+per-resolver or per-domain limit can still constrain the total. Burst `1` spaces
+queries evenly; increasing the rate does not require increasing the burst.
+The budget includes data, pings, MTU probes, and session setup. Enabling any
+scope also reduces duplication, session racing, and background probe concurrency
+to conserve the budget. See [client_config.toml.simple](client_config.toml.simple)
+for all rate-limit settings.
 
 ### Transport selection
 
@@ -891,7 +932,9 @@ Confirm `ENCRYPTION_AUTO_DETECT = true`, use the same encryption key, and do not
 
 ## Build and test
 
-Requirements: Go 1.25 or compatible current Go toolchain.
+Requirements: Go 1.26 or newer, following `go.mod`. QUIC resolver support uses
+quic-go v0.63.0. Release CI reads the module requirement directly; Linux release
+installers consume prebuilt binaries and do not require Go on the target host.
 
 ```bash
 go build ./cmd/client

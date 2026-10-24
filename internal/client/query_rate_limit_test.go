@@ -1,9 +1,31 @@
 package client
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
+
+func TestQueryRateLimiterUserDefinedRates(t *testing.T) {
+	for _, rate := range []float64{0.5, 6, 500, 1000, 10000} {
+		for scope := 0; scope < 3; scope++ {
+			t.Run(fmt.Sprintf("rate=%g/scope=%d", rate, scope), func(t *testing.T) {
+				var rates [3]float64
+				rates[scope] = rate
+				limiter := newQueryRateLimiter(rates[0], rates[1], rates[2], 1, 0)
+				now := time.Now()
+				gap := time.Duration(float64(time.Second) / rate)
+				// Book enough slots to catch a hidden low-rate clamp or burst.
+				for i := 0; i <= 1000; i++ {
+					want := time.Duration(i) * gap
+					if got := limiter.schedule(now, "1.1.1.1", "tunnel.example", true); got != want {
+						t.Fatalf("slot %d: got %v, want %v", i, got, want)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestQueryRateLimiter(t *testing.T) {
 	if newQueryRateLimiter(0, 0, 0, 1, 0) != nil || newQueryRateLimiter(-1, 0, 0, 1, 0) != nil {

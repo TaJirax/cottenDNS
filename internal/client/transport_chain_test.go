@@ -4,7 +4,7 @@
 // Github: https://github.com/TaJirax/CottenDns
 // Year: 2026
 // ==============================================================================
-// transport_chain_test.go — locks the resolver transport contract:
+// transport_chain_test.go â€” locks the resolver transport contract:
 //
 //   - DoT/DoH are opt-in only: nothing ever escalates into them.
 //   - Choosing one is not a commitment: both fall back to UDP then TCP/53, so a
@@ -48,6 +48,8 @@ func TestResolverTransportChainFallbacks(t *testing.T) {
 		{"auto", []string{"UDP/53", "TCP/53"}},
 		{"dot", []string{"DoT", "UDP/53", "TCP/53"}},
 		{"doh", []string{"DoH", "UDP/53", "TCP/53"}},
+		{"doh3", []string{"DoH/HTTP3"}},
+		{"doq", []string{"DoQ"}},
 		{"DoH", []string{"DoH", "UDP/53", "TCP/53"}}, // case-insensitive
 	}
 	for _, tc := range cases {
@@ -68,7 +70,7 @@ func TestResolverTransportChainFallbacks(t *testing.T) {
 func TestPlainTransportsNeverEscalateToEncrypted(t *testing.T) {
 	for _, name := range []string{"udp", "tcp", "auto"} {
 		for _, transport := range resolverTransportChain(name) {
-			if transport == transportDoT || transport == transportDoH {
+			if transport == transportDoT || transport == transportDoH || transport == transportDoH3 || transport == transportDoQ {
 				t.Fatalf("%q must not fall back into %s", name, transport)
 			}
 		}
@@ -90,10 +92,12 @@ func TestEncryptedChainsEndOnSurvivalTransport(t *testing.T) {
 func TestUsesStreamTransportOnlyForNonUDP(t *testing.T) {
 	c := &Client{}
 	for transport, wantStream := range map[resolverTransport]bool{
-		transportUDP: false,
-		transportTCP: true,
-		transportDoT: true,
-		transportDoH: true,
+		transportUDP:  false,
+		transportTCP:  true,
+		transportDoT:  true,
+		transportDoH:  true,
+		transportDoH3: true,
+		transportDoQ:  true,
 	} {
 		c.setActiveTransport(transport)
 		if got := c.usesStreamTransport(); got != wantStream {
@@ -196,4 +200,14 @@ func generateTestCert() (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}
+
+func TestQUICResolverTransportsNeverFallBackToPlaintext(t *testing.T) {
+	for _, name := range []string{"doh3", "doq"} {
+		for _, transport := range resolverTransportChain(name) {
+			if transport == transportUDP || transport == transportTCP {
+				t.Fatalf("%s falls back to plaintext", name)
+			}
+		}
+	}
 }
