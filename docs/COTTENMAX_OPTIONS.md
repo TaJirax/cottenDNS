@@ -94,6 +94,81 @@ tunnel zone. Many resolver IPs can share one upstream or rate limit. Test the
 authenticated tunnel from the affected connection rather than assuming a
 successful ordinary DNS lookup proves the path.
 
+## Larger healthy resolver pools and optional download FEC
+
+Explicit candidate lists have no first-64 cutoff: every supplied resolver remains
+eligible for authenticated checking. Discovery's `RESOLVER_DISCOVERY_WANT` can
+now request 1..4096 distinct healthy resolvers (default 16). Candidate discovery
+concurrency remains bounded at 64 and its pacing remains active. The optional
+`COTTENMAX_MAX_INFLIGHT` global query window accepts 1..4096 (default 256), while
+`COTTENMAX_MAX_PATH_WINDOW` remains 1..1024. A larger healthy resolver pool does
+not require flooding every candidate or increasing the default query window.
+
+Client-controlled download Reed-Solomon FEC is optional:
+
+```toml
+COTTENMAX_FEC_DOWNLOAD_ENABLED = false
+COTTENMAX_FEC_DATA_SHARDS = 4
+COTTENMAX_FEC_PARITY_SHARDS = 1
+```
+
+Enable it only with an updated FEC-capable CottenDNS server. It is independent
+of the Normal-mode server FEC settings. The client requests the parameters in
+an authenticated session control frame, and the server confirms them in an
+ordinary answer. No new HELLO round trip is added. With FEC off, no FEC frames,
+source headers, parity queries, or decoder history are created; existing Max
+servers remain compatible. FEC on requires confirmation and never silently
+claims recovery support from an older server.
+
+Configured data blocks are 2..16 packets with 1..4 recovery shards. Original
+data leaves immediately and carries no FEC header. Separate encrypted parity
+frames identify existing packet numbers, split to the actual DNS-answer budget,
+and recover lost download frames before ARQ retransmission when enough shards
+arrive. Short tails flush without waiting for unrelated traffic. Histories and
+repair queues are bounded; parity is best-effort, is not protected by more
+parity, and uses already solicited DNS answers. Existing ARQ remains the fallback.
+Upload traffic continues to use the existing ARQ mechanism.
+
+Parity consumes real bandwidth and answer slots: 4 data / 1 parity is a useful
+starting point, not a free speed increase. Metadata and MTU fragmentation add to
+the nominal 25% parity ratio. Keep the default off on healthy or bandwidth-bound
+paths; test it on the affected lossy connection before retaining it. The global
+query and congestion ceilings remain in force with FEC enabled.
+
+## Resolver lists and compatibility
+
+A resolver list is a candidate pool, not a list of guaranteed tunnel paths.
+CottenMax can consider the complete Android bundled list, including thousands
+of entries. It rotates bounded checks across unverified candidates while giving
+authenticated paths priority for real traffic. It does not wait for every entry
+to finish before connecting, and large lists cannot reserve every in-flight
+query slot for discovery. Healthy paths retain their configured congestion and
+in-flight ceilings; no smaller global window is imposed as a workaround.
+
+A compatible resolver must be reachable from the current network using the
+selected transport and port, recurse to the complete `cottenmax-v1.` tunnel
+subtree, and preserve the encoded query and response. Max starts with TXT
+answers and can use its indexed AAAA carrier after an explicit TXT refusal.
+An ordinary A lookup, ping, or successful Normal-mode scan does not establish
+Max support. The authoritative test is a verified server handshake followed by
+an exact upload/download challenge for the actual domain, credential, network,
+and transport. A resolver that filters TXT without an explicit refusal may
+still be unsuitable; encrypted transports also require endpoint support and
+valid certificate verification.
+
+Use **CottenMax** when scanning a Max profile. Auto scans test UDP and TCP
+independently across the entire supplied list, with bounded workers. Slow
+successful authentication receives a fresh bounded transfer-check deadline;
+optional large sizing does not invalidate a successful small transfer. A full
+scan of thousands of unreachable endpoints can take a long time. Keep known
+working results in the profile while retesting other candidates; reachability
+can differ by ISP and change over time.
+
+Size-discovery queries remain fully padded to the trial length but carry no
+application data, so a rejected large-QNAME trial does not strand the startup
+challenge or real stream data. Verification errors identify stream opening,
+challenge writing, or reply reading to distinguish those failure stages.
+
 ## UDP/TCP connections and authenticated MTU scans
 
 With `TUNNEL_MODE = "cottenmax"`, `RESOLVER_TRANSPORT = "auto"` creates
@@ -241,7 +316,7 @@ empty resolver file is permitted only for opted-in Max discovery with usable
 candidates. Discovery does not promise the bundled candidates speak your
 selected encrypted transport or match its configured TLS identity.
 
-`WANT` and `CONCURRENCY` accept 1..64; pace accepts 1..60000 ms; extra candidates
+`WANT` accepts 1..4096 and `CONCURRENCY` 1..64; pace accepts 1..60000 ms; extra candidates
 are limited to 256 endpoints. Range sampling accepts 0..4096 and is a separate
 explicit opt-in; zero does not sample address ranges. Pacing limits candidate
 addition, not the total tunnel query rate.
@@ -270,7 +345,7 @@ automatic remote profile/list updates are not implemented here.
 | `COTTENMAX_MAX_QNAME` | 253 | At least the safe size, at most 253. |
 | `COTTENMAX_MAX_ANSWER` | 1232 | 512..1232 bytes; paths still begin conservatively. |
 | `COTTENMAX_MAX_PATH_WINDOW` | 256 | 1..1024 queries per path; congestion control grows from a small window. |
-| `COTTENMAX_MAX_INFLIGHT` | 256 | 1..1024 outstanding queries across paths. |
+| `COTTENMAX_MAX_INFLIGHT` | 256 | 1..4096 outstanding queries across paths. |
 | `COTTENMAX_SESSION_IDLE_MILLISECONDS` | 90000 | 1000..90000; retires idle sessions before server expiry. |
 | `COTTENMAX_HOLD_MILLISECONDS` | 500 | 0..1500 in 100 ms steps; 0 disables held polls. |
 | `QNAME_LABEL_LENGTH` | 63 in default config | 16..63 for Max; presets/explicit values may change it. |
