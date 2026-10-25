@@ -29,7 +29,10 @@ type ClientConfig struct {
 	Resolvers                      []string
 	// Domains adds optional standby domains to Domain. The primary fast path is
 	// unchanged; each standby gets its own authenticated session only on demand.
-	Domains                        []string
+	Domains []string
+	// DomainStrategy is "failover" (default), or experimental "parallel".
+	// Parallel balances independent streams; it does not stripe one stream.
+	DomainStrategy                 string
 	FailoverAfter                  time.Duration
 	QNameLabelLength               int
 	QNameLabelJitter               bool
@@ -45,9 +48,12 @@ type ClientConfig struct {
 }
 
 type Client struct {
-	engine   *soar.Client
-	secret   string
-	failover *domainFailover
+	engine      *soar.Client
+	secret      string
+	failover    *domainFailover
+	parallel    *domainParallel
+	domain      string
+	maxInflight int
 }
 
 func NewClient(cfg ClientConfig) (*Client, error) {
@@ -104,6 +110,20 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if cfg.MaxInflight <= 0 {
 		cfg.MaxInflight = 256
 	}
+	strategy := strings.ToLower(strings.TrimSpace(cfg.DomainStrategy))
+	if strategy == "" {
+		strategy = "failover"
+	}
+	if strategy != "failover" && strategy != "parallel" {
+		return nil, fmt.Errorf("cottenmax: unknown domain strategy %q", cfg.DomainStrategy)
+	}
+	var domainBudgets []int
+	if strategy == "parallel" && len(domains) > 1 {
+		domainBudgets, err = splitDomainBudget(min(cfg.MaxInflight, 4096), len(domains))
+		if err != nil {
+			return nil, err
+		}
+	}
 	discovery := cfg.Discovery
 	if cfg.DiscoveryForDomain != nil {
 		discovery = cfg.DiscoveryForDomain(domains[0])
@@ -121,13 +141,20 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		QNameLabelLength: cfg.QNameLabelLength, QNameLabelJitter: cfg.QNameLabelJitter, QNameLossGuard: cfg.QNameLossGuard,
 		DNSPaddingBlockSize: cfg.EncryptedDNSPaddingBlockSize,
 	}
+	if len(domainBudgets) > 0 {
+		engineCfg.MaxInflight = domainBudgets[0]
+	}
 	engine, err := soar.NewClient(engineCfg)
 	if err != nil {
 		return nil, err
 	}
-	client := &Client{engine: engine, secret: cfg.Secret}
+	client := &Client{engine: engine, secret: cfg.Secret, domain: domains[0], maxInflight: min(cfg.MaxInflight, 4096)}
 	if len(domains) > 1 {
 		client.failover = newDomainFailover(domains, cfg.FailoverAfter, engineCfg, engine, cfg.DiscoveryForDomain)
+		if strategy == "parallel" {
+			client.failover.budgets = domainBudgets
+			client.parallel = newDomainParallel(client.failover)
+		}
 	}
 	return client, nil
 }
@@ -150,6 +177,9 @@ func (c *Client) dial(ctx context.Context, target string, confirmed bool) (net.C
 	if len(signed) > 255 {
 		return nil, fmt.Errorf("cottenmax: destination descriptor exceeds 255 bytes")
 	}
+	if c.parallel != nil {
+		return c.parallel.dial(ctx, signed, confirmed)
+	}
 	if c.failover != nil {
 		return c.failover.dial(ctx, signed, confirmed)
 	}
@@ -163,9 +193,16 @@ func (c *Client) Close() error {
 	return c.engine.Close()
 }
 
-// PathStats describes the preferred domain's resolver paths. Domains have
-// independent sessions; a successful failover changes this preferred domain.
+// PathStats describes the preferred failover domain, or every started domain
+// in parallel mode. DomainStats retains the per-domain association.
 func (c *Client) PathStats() []soar.PathStat {
+	if c.parallel != nil {
+		var paths []soar.PathStat
+		for _, domain := range c.DomainStats() {
+			paths = append(paths, domain.Paths...)
+		}
+		return paths
+	}
 	if c.failover != nil {
 		return c.failover.preferredEngine().PathStats()
 	}
@@ -173,6 +210,14 @@ func (c *Client) PathStats() []soar.PathStat {
 }
 
 func (c *Client) Established() bool {
+	if c.parallel != nil {
+		for _, domain := range c.DomainStats() {
+			if domain.Established {
+				return true
+			}
+		}
+		return false
+	}
 	if c.failover != nil {
 		return c.failover.preferredEngine().Established()
 	}
