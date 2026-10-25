@@ -13,6 +13,8 @@ func optionHelp(key string, server bool) string {
 		return ""
 	}
 	switch key {
+	case "COTTENMAX_TRAFFIC_PROFILE":
+		return "full (default, current Max behavior) or low (paced queries and smaller concurrency per client); reconnect to apply"
 	case "COTTENMAX_FEC_DOWNLOAD_ENABLED":
 		return "Optional Max download parity recovery; default off; FEC-capable server required; extra bandwidth"
 	case "COTTENMAX_FEC_DATA_SHARDS":

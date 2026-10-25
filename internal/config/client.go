@@ -49,6 +49,7 @@ type ClientConfig struct {
 	ResolverDiscoverySampleRanges      int      `toml:"RESOLVER_DISCOVERY_SAMPLE_RANGES"`
 	CottenMaxServerPublicKey           string   `toml:"COTTENMAX_SERVER_PUBLIC_KEY"`
 	CottenMaxHoldMilliseconds          int      `toml:"COTTENMAX_HOLD_MILLISECONDS"`
+	CottenMaxTrafficProfile            string   `toml:"COTTENMAX_TRAFFIC_PROFILE"`
 	CottenMaxFECDownloadEnabled        bool     `toml:"COTTENMAX_FEC_DOWNLOAD_ENABLED"`
 	CottenMaxFECDataShards             int      `toml:"COTTENMAX_FEC_DATA_SHARDS"`
 	CottenMaxFECParityShards           int      `toml:"COTTENMAX_FEC_PARITY_SHARDS"`
@@ -445,6 +446,7 @@ func defaultClientConfig() ClientConfig {
 		MTUWeightedMinPool:                 2,
 		FastConnect:                        false,
 		CottenMaxHoldMilliseconds:          500,
+		CottenMaxTrafficProfile:            CottenMaxTrafficFull,
 		CottenMaxFailoverAfterMilliseconds: 3000,
 		CottenMaxSafeQName:                 101, CottenMaxMaxQName: 253, CottenMaxMaxAnswer: 1232,
 		CottenMaxMaxPathWindow: 256, CottenMaxMaxInflight: 256, CottenMaxSessionIdleMilliseconds: 90000,
@@ -623,6 +625,11 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		return cfg, err
 	}
 	cfg.TunnelMode = mode
+	profile, err := normalizeCottenMaxTrafficProfile(cfg.CottenMaxTrafficProfile)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.CottenMaxTrafficProfile = profile
 	cfg.ConfigPreset = normalizeConfigPresetName(cfg.ConfigPreset)
 	if !isKnownConfigPreset(cfg.ConfigPreset) {
 		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: default, speed, survival, tcp-survival)", cfg.ConfigPreset)

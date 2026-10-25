@@ -26,21 +26,22 @@ import (
 )
 
 type options struct {
-	Cipher    string  `json:"cipher"`
-	Strategy  string  `json:"strategy"`
-	Direction string  `json:"direction"`
-	Scope     string  `json:"cap_scope"`
-	Domains   int     `json:"domains"`
-	Flows     int     `json:"flows"`
-	Bytes     int     `json:"bytes_per_flow"`
-	RTT       int     `json:"rtt_ms"`
-	Loss      float64 `json:"loss"`
-	QPS       int     `json:"qps"`
-	Name      int     `json:"qname_cap"`
-	Answer    int     `json:"answer_cap"`
-	Inflight  int     `json:"inflight_total"`
-	Seed      int64   `json:"seed"`
-	Blocked   int     `json:"blocked_domain"`
+	TrafficProfile string  `json:"traffic_profile"`
+	Cipher         string  `json:"cipher"`
+	Strategy       string  `json:"strategy"`
+	Direction      string  `json:"direction"`
+	Scope          string  `json:"cap_scope"`
+	Domains        int     `json:"domains"`
+	Flows          int     `json:"flows"`
+	Bytes          int     `json:"bytes_per_flow"`
+	RTT            int     `json:"rtt_ms"`
+	Loss           float64 `json:"loss"`
+	QPS            int     `json:"qps"`
+	Name           int     `json:"qname_cap"`
+	Answer         int     `json:"answer_cap"`
+	Inflight       int     `json:"inflight_total"`
+	Seed           int64   `json:"seed"`
+	Blocked        int     `json:"blocked_domain"`
 }
 
 type counters struct {
@@ -356,7 +357,7 @@ func experiment(o options) (res result) {
 			srv.DispatchUDP(b[:n], serverPC, a)
 		}
 	}()
-	cli, err := cottenmax.NewClient(cottenmax.ClientConfig{Domain: domains[0], Domains: domains[1:], DomainStrategy: o.Strategy, Secret: secret, Resolvers: []string{front.LocalAddr().String()}, TCP: "off", MaxInflight: o.Inflight, MaxPathWindow: o.Inflight, SafeQName: o.Name, MaxQName: o.Name, MaxAnswer: o.Answer, Hold: 0, FailoverAfter: 2 * time.Second})
+	cli, err := cottenmax.NewClient(cottenmax.ClientConfig{TrafficProfile: o.TrafficProfile, Domain: domains[0], Domains: domains[1:], DomainStrategy: o.Strategy, Secret: secret, Resolvers: []string{front.LocalAddr().String()}, TCP: "off", MaxInflight: o.Inflight, MaxPathWindow: o.Inflight, SafeQName: o.Name, MaxQName: o.Name, MaxAnswer: o.Answer, Hold: 0, FailoverAfter: 2 * time.Second})
 	if err != nil {
 		res.Error = err.Error()
 		return
@@ -506,6 +507,7 @@ func experiment(o options) (res result) {
 
 func main() {
 	var o options
+	flag.StringVar(&o.TrafficProfile, "traffic-profile", "full", "full (existing unpaced behavior) or low (bounded query traffic)")
 	flag.StringVar(&o.Cipher, "cipher", "chacha20-poly1305-8", "matched laboratory suite")
 	flag.StringVar(&o.Strategy, "strategy", "failover", "failover or experimental parallel")
 	flag.StringVar(&o.Direction, "direction", "download", "download or upload")

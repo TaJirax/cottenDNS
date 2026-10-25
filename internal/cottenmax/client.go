@@ -19,6 +19,10 @@ type Discovery = soar.Discovery
 const MaxStreamsLimit = soar.MaxStreamsLimit
 
 type ClientConfig struct {
+	// TrafficProfile is "full" (default), or "low" for bounded query traffic.
+	// Full preserves the existing unpaced behavior; low shares its rate ceiling
+	// across every domain and resolver created by this client.
+	TrafficProfile                 string
 	FECDownloadEnabled             bool
 	FECDataShards, FECParityShards int
 	Discovery                      Discovery
@@ -48,15 +52,22 @@ type ClientConfig struct {
 }
 
 type Client struct {
-	engine      *soar.Client
-	secret      string
-	failover    *domainFailover
-	parallel    *domainParallel
-	domain      string
-	maxInflight int
+	engine             *soar.Client
+	secret             string
+	failover           *domainFailover
+	parallel           *domainParallel
+	domain             string
+	maxInflight        int
+	trafficProfile     string
+	admission          *dialAdmission
+	transportAdmission *dialAdmission
 }
 
 func NewClient(cfg ClientConfig) (*Client, error) {
+	profile, limiter, err := applyTrafficProfile(&cfg)
+	if err != nil {
+		return nil, err
+	}
 	safeQName, maxQName := cfg.SafeQName, cfg.MaxQName
 	if safeQName <= 0 {
 		safeQName = 101
@@ -129,6 +140,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		discovery = cfg.DiscoveryForDomain(domains[0])
 	}
 	engineCfg := soar.Config{
+		QueryRateLimiter: limiter, DisableTailDuplication: profile == TrafficProfileLow,
 		FECDownloadEnabled: cfg.FECDownloadEnabled, FECDataShards: cfg.FECDataShards, FECParityShards: cfg.FECParityShards,
 		Zone: Zone(domains[0]), ServerKey: ed25519.PublicKey(key), Resolvers: cfg.Resolvers,
 		TCP: cfg.TCP, Hold: cfg.Hold, MaxStreams: cfg.MaxStreams, Discovery: discovery,
@@ -141,16 +153,29 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		QNameLabelLength: cfg.QNameLabelLength, QNameLabelJitter: cfg.QNameLabelJitter, QNameLossGuard: cfg.QNameLossGuard,
 		DNSPaddingBlockSize: cfg.EncryptedDNSPaddingBlockSize,
 	}
+	var admission, transportAdmission *dialAdmission
+	if profile == TrafficProfileLow {
+		admission = newLowDialAdmission()
+		transportAdmission = newDialAdmission(LowTrafficStreamsPerSecond, LowTrafficTransportBurst)
+		engineCfg.DialTCP = transportAdmission.wrapDial(cfg.DialTCP)
+		engineCfg.InitialResolverLimit = 2
+	}
 	if len(domainBudgets) > 0 {
 		engineCfg.MaxInflight = domainBudgets[0]
 	}
 	engine, err := soar.NewClient(engineCfg)
 	if err != nil {
+		if admission != nil {
+			admission.cancel()
+			transportAdmission.cancel()
+		}
 		return nil, err
 	}
-	client := &Client{engine: engine, secret: cfg.Secret, domain: domains[0], maxInflight: min(cfg.MaxInflight, 4096)}
+	client := &Client{engine: engine, secret: cfg.Secret, domain: domains[0], maxInflight: min(cfg.MaxInflight, 4096), trafficProfile: profile}
+	client.admission, client.transportAdmission = admission, transportAdmission
 	if len(domains) > 1 {
 		client.failover = newDomainFailover(domains, cfg.FailoverAfter, engineCfg, engine, cfg.DiscoveryForDomain)
+		client.failover.admission = client.admission
 		if strategy == "parallel" {
 			client.failover.budgets = domainBudgets
 			client.parallel = newDomainParallel(client.failover)
@@ -158,6 +183,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	return client, nil
 }
+
+// TrafficProfile returns the normalized profile selected at construction.
+func (c *Client) TrafficProfile() string { return c.trafficProfile }
 
 // Dial waits for the server to confirm the destination before a SOCKS/HTTP
 // success is sent.
@@ -183,10 +211,17 @@ func (c *Client) dial(ctx context.Context, target string, confirmed bool) (net.C
 	if c.failover != nil {
 		return c.failover.dial(ctx, signed, confirmed)
 	}
+	if err := c.admission.wait(ctx); err != nil {
+		return nil, err
+	}
 	return dialEngine(ctx, c.engine, signed, confirmed)
 }
 
 func (c *Client) Close() error {
+	if c.admission != nil {
+		c.admission.cancel()
+		c.transportAdmission.cancel()
+	}
 	if c.failover != nil {
 		return c.failover.close()
 	}

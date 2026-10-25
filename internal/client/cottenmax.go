@@ -30,6 +30,7 @@ func (c *Client) runCottenMax(ctx context.Context) error {
 	}
 	c.cottenMax.Store(engine)
 	defer engine.Close()
+	c.log.Infof("CottenMax traffic profile: %s", engine.TrafficProfile())
 	c.log.Warnf("Experimental CottenMax: safe startup, held polls, ephemeral keys, byte-range retransmission and implicit upload ACKs; no automatic legacy downgrade")
 	go c.runTrafficStatsReporter(ctx)
 	go func() {
@@ -289,13 +290,14 @@ func (c *Client) newCottenMaxEngine() (*cottenmax.Client, error) {
 	if len(resolvers) == 0 && !c.cfg.ResolverDiscoveryEnabled {
 		return nil, fmt.Errorf("cottenmax: no resolvers for configured address family")
 	}
-	// Hard query budgets cannot be applied by blocking Soar's send callback:
-	// it holds its session lock while sending. Reject until scheduled pacing
-	// can be integrated without stalling answer processing or loss detection.
+	// The dedicated Max traffic profile has its own aggregate scheduler.
+	// Normal's independently configurable global/resolver/domain budgets are
+	// not mapped to it, so reject those settings rather than silently ignore them.
 	if c.cfg.QueryRateLimited() {
 		return nil, fmt.Errorf("experimental cottenmax does not yet support hard QUERY_RATE_LIMIT_* budgets; use legacy")
 	}
 	engine, err := cottenmax.NewClient(cottenmax.ClientConfig{
+		TrafficProfile:     c.cfg.CottenMaxTrafficProfile,
 		FECDownloadEnabled: c.cfg.CottenMaxFECDownloadEnabled, FECDataShards: c.cfg.CottenMaxFECDataShards, FECParityShards: c.cfg.CottenMaxFECParityShards,
 		Domain: c.cfg.Domains[0], PublicKey: c.cfg.CottenMaxServerPublicKey,
 		Secret: c.cfg.EncryptionKey, Resolvers: resolvers, TCP: tcp,

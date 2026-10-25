@@ -49,6 +49,14 @@ type Config struct {
 	MaxInflight int
 	// MaxPathWindow caps one path's queries outstanding. Default 32.
 	MaxPathWindow int
+	// QueryRateLimiter optionally paces ALL query kinds before packet building.
+	// Nil retains current throughput behavior. Domain engines may share a budget.
+	QueryRateLimiter *QueryRateLimiter
+	// DisableTailDuplication suppresses proactive upload copies, not ARQ recovery.
+	DisableTailDuplication bool
+	// InitialResolverLimit defers excess explicit resolvers to paced discovery.
+	// Zero retains eager startup. Deferred entries are not discarded or sampled.
+	InitialResolverLimit int
 	// MaxAnswer caps the DNS answer size (bytes) paths may probe up to. Every path starts at 512,
 	// which every network delivers, and grows only while larger answers keep arriving: some
 	// networks silently drop large DNS responses (they look like amplification). Default 1232.
@@ -181,9 +189,12 @@ type Client struct {
 	cacheDone      chan struct{} // closed once storeCache has flushed and exited
 	tcpDialSlots   chan struct{} // bound simultaneous DNS TCP/TLS handshakes
 
-	lastDump   time.Time
-	probeUntil time.Time // short authenticated startup probe, never an idle beacon
-	scoutNext  int       // rotate through every configured path, including large resolver lists
+	lastDump      time.Time
+	probeUntil    time.Time // short authenticated startup probe, never an idle beacon
+	scoutNext     int       // rotate through every configured path, including large resolver lists
+	rateNext      time.Time // next locally budgeted send opportunity, never a loss deadline
+	lastRateScout time.Time // bounded discovery progress while rate-limited data stays busy
+	rateScoutNext uint64    // rotates the candidate given the next paced scout opportunity
 }
 
 type path struct {
@@ -333,6 +344,32 @@ func (cs *clientSession) isClosed() bool {
 // NewClient starts a client. It handshakes lazily on the first Dial.
 func NewClient(cfg Config) (*Client, error) {
 	cfg.setDefaults()
+	if cfg.InitialResolverLimit > 0 && len(cfg.Resolvers) > cfg.InitialResolverLimit {
+		// Low traffic must also bound eager TCP/TLS connection fanout. Preserve
+		// every configured resolver as a candidate, without enabling new bundled
+		// sources when the caller explicitly disabled automatic discovery.
+		d := cfg.Discovery
+		if !d.Enabled {
+			d.noBundled = true
+			d.Candidates, d.Cache = nil, nil
+		}
+		d.Enabled = true
+		deferred := make([]string, 0, len(cfg.Resolvers)-cfg.InitialResolverLimit)
+		for _, resolver := range cfg.Resolvers[cfg.InitialResolverLimit:] {
+			// Eager configured endpoints have always accepted hostnames. Resolve
+			// them here too, before starting the scheduler, so an IP-only candidate
+			// parser cannot silently lose them or block DNS lookup under Client.mu.
+			addr, err := net.ResolveUDPAddr("udp", resolver)
+			if err != nil {
+				cfg.Logger.Warn("bad resolver", "resolver", resolver, "err", err)
+				continue
+			}
+			deferred = append(deferred, addr.String())
+		}
+		d.Candidates = append(deferred, d.Candidates...)
+		cfg.Resolvers = cfg.Resolvers[:cfg.InitialResolverLimit]
+		cfg.Discovery = d
+	}
 	if cfg.FECDownloadEnabled && !validPacketFEC(cfg.FECDataShards, cfg.FECParityShards) {
 		return nil, errors.New("soar: download FEC needs 2..16 data shards and 1..4 parity shards")
 	}
@@ -609,6 +646,9 @@ func (c *Client) run() {
 
 func (c *Client) nextDeadlineLocked(now time.Time) time.Duration {
 	next := now.Add(time.Second)
+	if c.rateNext.After(now) && c.rateNext.Before(next) {
+		next = c.rateNext
+	}
 	for _, q := range c.pending {
 		d := q.deadline
 		if q.expired {
@@ -1100,6 +1140,19 @@ func (c *Client) fillLocked(now time.Time) {
 			}
 		}
 	}
+	// A continuously busy stream can otherwise consume every paced token before
+	// scouts get their turn, preventing alternate-path recovery indefinitely.
+	// Low mode gives one candidate an opportunity at most every 250ms (or the
+	// configured slower discovery pace); full mode keeps its original order.
+	if c.cfg.QueryRateLimiter != nil && len(candidates) > 0 && now.Sub(c.lastRateScout) >= max(c.cfg.Discovery.Pace, 250*time.Millisecond) {
+		index := int(c.rateScoutNext % uint64(len(candidates)))
+		if sent := c.sendDataWithSlotsLocked(cs, candidates[index], now, false, c.cfg.MaxInflight-inflight); sent > 0 {
+			inflight += sent
+			c.lastRateScout = now
+			c.rateScoutNext++
+			candidates = append(candidates[:index], candidates[index+1:]...)
+		}
+	}
 	trafficLimit := c.cfg.MaxInflight - len(candidates)
 	for inflight < trafficLimit && len(c.pending) < maxPending {
 		cs.mu.Lock()
@@ -1185,6 +1238,9 @@ func (c *Client) sendHellosLocked(cs *clientSession, now time.Time) {
 		if !p.usable(now) || p.inflight > 0 || now.Sub(p.lastHello) < helloRetry {
 			continue
 		}
+		if !c.takeQueryLocked(now) {
+			break
+		}
 		p.lastHello = now
 		if cs.firstHello.IsZero() {
 			cs.firstHello = now
@@ -1205,6 +1261,9 @@ func (c *Client) sendDataWithSlotsLocked(cs *clientSession, p *path, now time.Ti
 	// paths, the tail copy) respects the ceiling; a packet built but never sent would sit in
 	// the session's sent map with no query to fail it.
 	if slots <= 0 || len(c.pending) >= maxPending {
+		return 0
+	}
+	if !c.takeQueryLocked(now) {
 		return 0
 	}
 	nameLen := p.nameLen
@@ -1241,7 +1300,7 @@ func (c *Client) sendDataWithSlotsLocked(cs *clientSession, p *path, now time.Ti
 			plain = append(plain, frPadding)
 		}
 	}
-	dup := allowDup && pkt != nil && len(pkt.streams) > 0 && p.verified && !cs.hasData()
+	dup := allowDup && !c.cfg.DisableTailDuplication && pkt != nil && len(pkt.streams) > 0 && p.verified && !cs.hasData()
 	payload := cs.seal.sealUp(cs.sid, pn, plain)
 	cs.mu.Unlock()
 	dbg("cli send pn=%d path=%s plain=%x", pn, p.addr, plain)

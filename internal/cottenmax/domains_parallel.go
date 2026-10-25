@@ -163,6 +163,10 @@ func (p *domainParallel) dial(ctx context.Context, signed string, confirmed bool
 		if index < 0 {
 			break
 		}
+		if err := p.f.admission.wait(ctx); err != nil {
+			p.release(index)
+			return nil, err
+		}
 		attempt, cancel := context.WithTimeout(ctx, p.f.after)
 		stop := context.AfterFunc(p.f.ctx, cancel)
 		engine, err := p.f.engineFor(attempt, index)

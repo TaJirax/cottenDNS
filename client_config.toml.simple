@@ -19,6 +19,9 @@
 
 # Existing engine (default), including compatibility with older servers:
 TUNNEL_MODE = "legacy"
+# Max traffic profile: full keeps current speed; low paces queries and caps concurrency.
+# Applies only to CottenMax. Reconnect to apply; see docs/COTTENMAX_TRAFFIC_PROFILES.md.
+COTTENMAX_TRAFFIC_PROFILE = "full"
 # Alternative: TUNNEL_MODE = "cottenmax" within the same CottenDNS profile.
 # Uses the same DOMAINS, ENCRYPTION_KEY and resolver list. No extra key or file.
 # Upgraded servers accept both modes on the same listener. No silent downgrade.
