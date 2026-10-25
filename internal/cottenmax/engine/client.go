@@ -290,7 +290,9 @@ type clientSession struct {
 	lastAuth    time.Time // last authenticated answer; guarded by Client.mu
 	// unanswered is when the first query since the last authenticated answer went out (zero if
 	// none has); guarded by Client.mu.
-	unanswered time.Time
+	unanswered       time.Time
+	lowWarmSuccesses uint8 // authenticated non-scout replies; guarded by Client.mu
+	lowWarmSends     uint8 // bounded verified-path warm admission; guarded by Client.mu
 }
 
 // errSessionIdle ends a session retired for idling; see Config.SessionIdle.
@@ -1287,7 +1289,8 @@ func (c *Client) sendDataWithSlotsLocked(cs *clientSession, p *path, now time.Ti
 	if c.cfg.LowReductionPercent != 0 && float64(p.inflight) >= c.percentagePathWindow(p) {
 		return 0
 	}
-	if !c.takeQueryLocked(now) {
+	warm := c.percentageWarmStartLocked() && p.verified
+	if !c.takeDataQueryLocked(p, now) {
 		return 0
 	}
 	nameLen := p.nameLen
@@ -1340,6 +1343,9 @@ func (c *Client) sendDataWithSlotsLocked(cs *clientSession, p *path, now time.Ti
 	c.sendLocked(p, &pendingQuery{p: p, sess: cs, pn: pn, probe: probe, scout: !p.verified, poll: !data, class: class}, payload, now, timeout)
 	if len(c.pending) == before {
 		return 0
+	}
+	if warm {
+		cs.lowWarmSends++
 	}
 	sent := 1
 	// The tail of an upload (often a whole request) goes out twice, on another path if there is one.
@@ -1480,6 +1486,7 @@ func (c *Client) onAnswer(msg []byte) {
 		dbg("cli auth fail pn=%d err=%v", pn, err)
 		return // forged or corrupt: keep waiting for the real answer
 	}
+	c.notePercentageAuthenticatedLocked(q)
 	c.observeWireSizeLocked(p, q, len(msg))
 	delete(c.pending, a.txn)
 	cs.lastAuth, cs.unanswered = now, time.Time{}

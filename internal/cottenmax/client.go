@@ -103,20 +103,11 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if cfg.Hold == 0 {
 		cfg.Hold = time.Nanosecond
 	} // explicitly disable held polls
-	if cfg.ListenPacket == nil {
+	defaultListener := cfg.ListenPacket == nil
+	if defaultListener {
 		cfg.ListenPacket = func(ctx context.Context, network, address string) (net.PacketConn, error) {
 			var lc net.ListenConfig
-			pc, err := lc.ListenPacket(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			if udp, ok := pc.(*net.UDPConn); ok {
-				// A full flight can exceed the small Windows UDP default. Without
-				// this, delayed paths deliver bursts that look like network loss.
-				_ = udp.SetReadBuffer(256 << 10)
-				_ = udp.SetWriteBuffer(256 << 10)
-			}
-			return pc, nil
+			return lc.ListenPacket(ctx, network, address)
 		}
 	}
 	if cfg.MaxPathWindow <= 0 {
@@ -124,6 +115,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	if cfg.MaxInflight <= 0 {
 		cfg.MaxInflight = 256
+	}
+	if defaultListener {
+		cfg.ListenPacket = sizedPacketListener(cfg.ListenPacket, cfg.MaxInflight, cfg.MaxAnswer)
 	}
 	strategy := strings.ToLower(strings.TrimSpace(cfg.DomainStrategy))
 	if strategy == "" {

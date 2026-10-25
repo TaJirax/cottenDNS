@@ -57,6 +57,18 @@ func (c *Client) takeQueryLocked(now time.Time) bool {
 			return false
 		}
 	}
+	return c.takeFixedRateQueryLocked(now)
+}
+
+func (c *Client) takeDataQueryLocked(p *path, now time.Time) bool {
+	if c.percentageWarmStartLocked() && p.verified {
+		c.rateNext = time.Time{}
+		return c.takeFixedRateQueryLocked(now)
+	}
+	return c.takeQueryLocked(now)
+}
+
+func (c *Client) takeFixedRateQueryLocked(now time.Time) bool {
 	if c.cfg.QueryRateLimiter == nil {
 		return true
 	}

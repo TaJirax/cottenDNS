@@ -63,6 +63,7 @@ func TestPercentageReferenceUsesUnscaledCCAndHoldAdjustedRTT(t *testing.T) {
 	c, good, _, _ := schedulerFixture(t, 0, 256)
 	c.cfg.MaxPathWindow, c.cfg.MaxInflight = 100, 80
 	c.cfg.LowReductionPercent = 35
+	c.sess.lowWarmSends = percentageWarmReplies
 	c.cfg.PercentagePacer = NewPercentagePacer(35)
 	good.cwnd, good.srtt, good.hasRTT = 100, 100*time.Millisecond, true
 	now := time.Now()
@@ -88,6 +89,7 @@ func TestPercentageReferenceUsesUnscaledCCAndHoldAdjustedRTT(t *testing.T) {
 func TestPercentagePacingDoesNotMutateUnsentDataOrProbes(t *testing.T) {
 	c, good, st, pc := schedulerFixture(t, 0, 32)
 	c.cfg.LowReductionPercent = 35
+	c.sess.lowWarmSends = percentageWarmReplies
 	c.cfg.PercentagePacer = NewPercentagePacer(35)
 	c.cfg.MaxQName = 253
 	good.successes = 3
@@ -150,9 +152,10 @@ func TestPercentageFlightGateAndClosedReferenceCleanup(t *testing.T) {
 	c, good, _, pc := schedulerFixture(t, 0, 32)
 	c.done = make(chan struct{})
 	c.cfg.LowReductionPercent, c.cfg.PercentagePacer = 35, NewPercentagePacer(35)
+	c.sess.lowWarmSends = percentageWarmReplies
 	now := time.Now()
 	c.updatePercentageReferenceLocked(now)
-	good.inflight = int(c.percentagePathWindow(good))
+	good.inflight = int(math.Ceil(c.percentagePathWindow(good)))
 	if c.sendDataWithSlotsLocked(c.sess, good, now, false, 32) != 0 || len(pc.writes) != 0 || len(c.sess.sent) != 0 {
 		t.Fatal("scaled flight gate mutated unsent packet")
 	}
@@ -169,5 +172,83 @@ func TestPercentageFlightGateAndClosedReferenceCleanup(t *testing.T) {
 	c.updatePercentageReferenceLocked(now.Add(time.Second))
 	if len(p.references) != 0 {
 		t.Fatal("scheduler re-registered closed engine")
+	}
+}
+
+func TestPercentageWarmStartIsBoundedByAdmission(t *testing.T) {
+	c, good, _, pc := schedulerFixture(t, 0, 256)
+	c.cfg.LowReductionPercent, c.cfg.PercentagePacer = 35, NewPercentagePacer(35)
+	c.cfg.DisableTailDuplication = true
+	now := time.Now()
+	// Exhaust paced credit. Warm traffic must bypass only this percentage
+	// bucket, and only for a bounded number of verified-path attempts.
+	for range 4 {
+		c.cfg.PercentagePacer.TryTake(now)
+	}
+	for i := 0; i < percentageWarmReplies; i++ {
+		if c.sendDataWithSlotsLocked(c.sess, good, now, false, 256) != 1 {
+			t.Fatalf("warm attempt %d was not admitted", i)
+		}
+		// Delayed/lost replies do not extend the grace. Retire the artificial
+		// flight locally without delivering any successful answer.
+		for txn, q := range c.pending {
+			q.p.inflight--
+			delete(c.pending, txn)
+		}
+	}
+	if c.sess.lowWarmSends != percentageWarmReplies || c.sess.lowWarmSuccesses != 0 || len(pc.writes) != percentageWarmReplies {
+		t.Fatal("warm admission was not independently bounded")
+	}
+	if c.sendDataWithSlotsLocked(c.sess, good, now, false, 256) != 0 || c.percentageWarmStartLocked() {
+		t.Fatal("lost replies extended unpaced warm admission")
+	}
+	// A new session receives its own bounded learning period, not accumulated
+	// token credit from the earlier session.
+	c.sess = &clientSession{established: true}
+	if !c.percentageWarmStartLocked() {
+		t.Fatal("new session did not reset warm admission")
+	}
+}
+
+func TestPercentageWarmCreditRequiresAuthenticatedLiveData(t *testing.T) {
+	c, good, _, _ := schedulerFixture(t, 0, 256)
+	c.cfg.LowReductionPercent = 35
+	q := &pendingQuery{p: good, sess: c.sess}
+	for _, mutate := range []func(){func() { q.hello = true }, func() { q.scout = true }, func() { q.expired = true }} {
+		q.hello, q.scout, q.expired = false, false, false
+		mutate()
+		c.notePercentageAuthenticatedLocked(q)
+	}
+	if c.sess.lowWarmSuccesses != 0 {
+		t.Fatal("HELLO, scout or late response earned warm credit")
+	}
+	q.hello, q.scout, q.expired = false, false, false
+	for range 100 {
+		c.notePercentageAuthenticatedLocked(q)
+	}
+	if c.sess.lowWarmSuccesses != percentageWarmReplies {
+		t.Fatal("authenticated warm count did not saturate")
+	}
+}
+
+func TestPercentageDynamicBurstRespectsTimerAndCurrentFlight(t *testing.T) {
+	p := NewPercentagePacer(35)
+	owner := &Client{}
+	now := time.Unix(1000, 0)
+	p.updateWithFlight(owner, 10000, 100, now)
+	if p.burst != 65 {
+		t.Fatalf("scheduling allowance incorrectly capped at four: %v", p.burst)
+	}
+	p.TryTake(now.Add(time.Second))
+	if p.tokens < 60 {
+		t.Fatal("fast-path credit was not available at scheduler resolution")
+	}
+	p.updateWithFlight(owner, 100000, 7, now.Add(time.Second))
+	if p.burst != 7 || p.tokens > 7 {
+		t.Fatal("burst exceeded current aggregate scaled flight")
+	}
+	p.updateWithFlight(owner, 100, 2, now.Add(2*time.Second))
+	if p.burst != 2 || p.tokens > 2 {
+		t.Fatal("shrinking flight retained excessive idle credit")
 	}
 }
