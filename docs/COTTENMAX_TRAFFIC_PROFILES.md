@@ -71,6 +71,11 @@ queries close together. Lost packets still consume tokens. DNS transport retries
 outside the tunnel, recursive forwarding and network control packets can change
 the packet rate observed at a VPS.
 
+The budget governs tunnel query creation. A stalled TCP or encrypted transport
+can later flush buffered work, so its wire packet spacing need not match the
+scheduler exactly. Hostname resolution performed while loading a resolver
+configuration also uses the operating system's normal DNS facilities.
+
 ## Client and server scope
 
 This is a client-side traffic policy and does not require another wire protocol
@@ -91,6 +96,15 @@ the same available query/response capacity, so it can reduce useful speed under
 the low budget. It is not automatically enabled by choosing either profile.
 
 ## Responding to a VPS notice
+
+If a notice concerns scanning, distinguish the traffic source. Resolver
+discovery is initiated by the client device; it does not make the CottenDNS
+server scan the resolver list. VPS outbound destination connections come from
+authenticated client stream requests. Low therefore also paces new stream
+attempts, including failed targets, and disables random resolver-range sampling.
+It does not add new port restrictions or establish that scanning caused a
+particular notice. Clients choosing full, another application on the VPS, or
+unsolicited incoming traffic remain outside one low client's policy.
 
 Ask the provider for the reported direction, measured packets/second or
 bytes/second, time window and the allowed threshold. Those details distinguish
@@ -113,3 +127,52 @@ the same budget; a slow or lossy resolver can therefore take longer to qualify.
 Fully idle sessions retain the existing silence behavior. Local tests can verify
 the scheduler and successful transfers, but only measurements from the affected
 deployment can establish whether the provider's reported limit is satisfied.
+
+## Measured load and speed
+
+Measured implementation: `7934e3c2714627aa2b6ca9bf7058a5fb770ae9e2`.
+Windows x64, Ryzen 7 6800H, Go 1.26.5, actual UDP DNS through a loopback relay
+adding the stated latency/loss. Three sequential randomized repetitions per
+case. Both modes use the original eight-byte-tag cipher, QNAME 101 and answer
+512 bytes. Four connections use two domains in the experimental parallel mode;
+input flight 128 is reduced by the low profile. Download payload is 128 KiB
+total, upload 32 KiB total. Each received byte is checked.
+
+| Workload | Full goodput | Low goodput | Full queries/s | Low queries/s | Query-rate reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 80 ms download | 3.172 Mbps | 0.310 Mbps | 1034.7 | 97.8 | 90.5% |
+| 80 ms upload | 0.322 Mbps | 0.0244 Mbps | 1313.4 | 99.3 | 92.4% |
+| 120 ms download, 3% loss each way | 1.441 Mbps | 0.210 Mbps | 498.8 | 73.2 | 85.3% |
+
+These are medians during the payload phase, with startup and connection opening
+recorded separately. Congestion and loss can keep low below its allowed rate.
+Both domains carried data in all profile cases. For the 80 ms cases, median
+opening time for four connections increased from about 162 ms to 1.10 seconds
+because new connection attempts are paced.
+
+Low primarily spreads traffic over more time. It does not remove the cost of
+transferring the same data: median query totals were 346 versus 331 for download
+and 1069 versus 1066 for upload. Thus it addresses rate/burst pressure rather
+than guaranteeing a smaller monthly data bill or eliminating a scanning report.
+
+The current full profile also completed an 8 MiB single-connection loopback
+download at median 68.139 Mbps (range 67.096–73.879), versus 68.040 Mbps
+(66.267–73.907) for the retained prior laboratory binary. The 0.15% difference
+and overlapping ranges show no detectable slowdown in this case; three samples
+do not establish zero overhead for every workload. The prior binary is identified
+by SHA256, not a claimed source commit. Nested-worktree Go VCS metadata is
+misleading here; the metadata file explains the provenance limitation.
+
+All **24 transfer measurements passed**, alongside ordinary/experimental engine
+tests, configuration/runtime tests, client/server builds and vet. The full
+[Go Test CI](https://github.com/WhiteDNS/CottenDNS/actions/runs/40210934076)
+passed, including race and end-to-end checks. Focused UDP integration checks
+also verify shared short-window pacing, cancellation, healthy transfers through
+both domains, and continued resolver vetting under busy traffic.
+
+See [raw runs](../experiment-results/traffic-profiles-windows-amd64/runs.jsonl),
+[medians and ranges](../experiment-results/traffic-profiles-windows-amd64/summary.json),
+[hardware/binary metadata](../experiment-results/traffic-profiles-windows-amd64/metadata.json),
+and [the reproduction driver](../scripts/experiments/max_traffic_matrix.py).
+These measurements do not reproduce a provider's abuse classifier, an affected
+phone or an actual Shatel/VPS path.

@@ -3,6 +3,8 @@
 Date: 2026-10-25. Branch: `experiment/cottenmax-parity-multidomain-crypto`.
 Measured source: `8f691923844ddef398877a4cf34b7ff8fb541197`, based on released main `7db7b73658c791cce62300d29647e4d369d6e1e4`.
 
+Later work on this branch adds an optional [low/full traffic profile](COTTENMAX_TRAFFIC_PROFILES.md) to reduce query volume and new-connection bursts. The 513 measurements below remain the original cipher/domain investigation at the source commit above; they are not low-profile measurements.
+
 ## Findings and recommendations
 
 CottenMax can use multiple domains concurrently for separate connections. The prototype proves this with real UDP DNS traffic and verified data. It is not yet equivalent to Normal's ability to move an existing stream between domain paths. Its fixed division of the query budget also creates substantial regressions when only one domain has useful work. Do not enable this prototype by default.
