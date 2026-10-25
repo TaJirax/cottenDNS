@@ -19,7 +19,7 @@ type QueryRateLimiter struct {
 }
 
 // NewQueryRateLimiter constructs a positive-rate, positive-burst budget.
-// Invalid arguments are programming errors; client profiles use fixed constants.
+// Invalid arguments are programming errors; connection admission uses constants.
 func NewQueryRateLimiter(perSecond float64, burst int) *QueryRateLimiter {
 	if perSecond <= 0 || math.IsInf(perSecond, 0) || math.IsNaN(perSecond) || burst < 1 {
 		panic("soar: rate and burst must be positive and finite")
@@ -50,6 +50,13 @@ func (r *QueryRateLimiter) TryTake(now time.Time) (bool, time.Time) {
 // takeQueryLocked runs before any packet-building or probe/HELLO state changes.
 // A locally throttled packet must never enter ARQ's sent map or loss accounting.
 func (c *Client) takeQueryLocked(now time.Time) bool {
+	if c.cfg.PercentagePacer != nil {
+		ok, next := c.cfg.PercentagePacer.TryTake(now)
+		c.rateNext = next
+		if !ok {
+			return false
+		}
+	}
 	if c.cfg.QueryRateLimiter == nil {
 		return true
 	}

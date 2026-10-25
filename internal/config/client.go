@@ -50,6 +50,7 @@ type ClientConfig struct {
 	CottenMaxServerPublicKey           string   `toml:"COTTENMAX_SERVER_PUBLIC_KEY"`
 	CottenMaxHoldMilliseconds          int      `toml:"COTTENMAX_HOLD_MILLISECONDS"`
 	CottenMaxTrafficProfile            string   `toml:"COTTENMAX_TRAFFIC_PROFILE"`
+	CottenMaxLowReductionPercent       int      `toml:"COTTENMAX_LOW_REDUCTION_PERCENT"`
 	CottenMaxFECDownloadEnabled        bool     `toml:"COTTENMAX_FEC_DOWNLOAD_ENABLED"`
 	CottenMaxFECDataShards             int      `toml:"COTTENMAX_FEC_DATA_SHARDS"`
 	CottenMaxFECParityShards           int      `toml:"COTTENMAX_FEC_PARITY_SHARDS"`
@@ -447,6 +448,7 @@ func defaultClientConfig() ClientConfig {
 		FastConnect:                        false,
 		CottenMaxHoldMilliseconds:          500,
 		CottenMaxTrafficProfile:            CottenMaxTrafficFull,
+		CottenMaxLowReductionPercent:       35,
 		CottenMaxFailoverAfterMilliseconds: 3000,
 		CottenMaxSafeQName:                 101, CottenMaxMaxQName: 253, CottenMaxMaxAnswer: 1232,
 		CottenMaxMaxPathWindow: 256, CottenMaxMaxInflight: 256, CottenMaxSessionIdleMilliseconds: 90000,
@@ -630,6 +632,9 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		return cfg, err
 	}
 	cfg.CottenMaxTrafficProfile = profile
+	if cfg.CottenMaxLowReductionPercent < 10 || cfg.CottenMaxLowReductionPercent > 90 {
+		return cfg, fmt.Errorf("COTTENMAX_LOW_REDUCTION_PERCENT must be 10..90 (default 35)")
+	}
 	cfg.ConfigPreset = normalizeConfigPresetName(cfg.ConfigPreset)
 	if !isKnownConfigPreset(cfg.ConfigPreset) {
 		return cfg, fmt.Errorf("invalid CONFIG_PRESET: %q (valid: default, speed, survival, tcp-survival)", cfg.ConfigPreset)

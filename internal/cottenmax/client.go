@@ -19,10 +19,13 @@ type Discovery = soar.Discovery
 const MaxStreamsLimit = soar.MaxStreamsLimit
 
 type ClientConfig struct {
-	// TrafficProfile is "full" (default), or "low" for bounded query traffic.
-	// Full preserves the existing unpaced behavior; low shares its rate ceiling
+	// TrafficProfile is "full" (default), or "low" for reduced query traffic.
+	// Full preserves the existing unpaced behavior; low shares percentage pacing
 	// across every domain and resolver created by this client.
-	TrafficProfile                 string
+	TrafficProfile string
+	// LowReductionPercent is an approximate speed reduction target, 10..90;
+	// zero selects 35. Full retains the value without applying it.
+	LowReductionPercent            int
 	FECDownloadEnabled             bool
 	FECDataShards, FECParityShards int
 	Discovery                      Discovery
@@ -52,15 +55,16 @@ type ClientConfig struct {
 }
 
 type Client struct {
-	engine             *soar.Client
-	secret             string
-	failover           *domainFailover
-	parallel           *domainParallel
-	domain             string
-	maxInflight        int
-	trafficProfile     string
-	admission          *dialAdmission
-	transportAdmission *dialAdmission
+	engine              *soar.Client
+	secret              string
+	failover            *domainFailover
+	parallel            *domainParallel
+	domain              string
+	maxInflight         int
+	trafficProfile      string
+	lowReductionPercent int
+	admission           *dialAdmission
+	transportAdmission  *dialAdmission
 }
 
 func NewClient(cfg ClientConfig) (*Client, error) {
@@ -140,7 +144,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		discovery = cfg.DiscoveryForDomain(domains[0])
 	}
 	engineCfg := soar.Config{
-		QueryRateLimiter: limiter, DisableTailDuplication: profile == TrafficProfileLow,
+		PercentagePacer: limiter, DisableTailDuplication: profile == TrafficProfileLow,
 		FECDownloadEnabled: cfg.FECDownloadEnabled, FECDataShards: cfg.FECDataShards, FECParityShards: cfg.FECParityShards,
 		Zone: Zone(domains[0]), ServerKey: ed25519.PublicKey(key), Resolvers: cfg.Resolvers,
 		TCP: cfg.TCP, Hold: cfg.Hold, MaxStreams: cfg.MaxStreams, Discovery: discovery,
@@ -155,6 +159,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	var admission, transportAdmission *dialAdmission
 	if profile == TrafficProfileLow {
+		engineCfg.LowReductionPercent = cfg.LowReductionPercent
 		admission = newLowDialAdmission()
 		transportAdmission = newDialAdmission(LowTrafficStreamsPerSecond, LowTrafficTransportBurst)
 		engineCfg.DialTCP = transportAdmission.wrapDial(cfg.DialTCP)
@@ -171,7 +176,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		}
 		return nil, err
 	}
-	client := &Client{engine: engine, secret: cfg.Secret, domain: domains[0], maxInflight: min(cfg.MaxInflight, 4096), trafficProfile: profile}
+	client := &Client{engine: engine, secret: cfg.Secret, domain: domains[0], maxInflight: min(cfg.MaxInflight, 4096), trafficProfile: profile, lowReductionPercent: cfg.LowReductionPercent}
 	client.admission, client.transportAdmission = admission, transportAdmission
 	if len(domains) > 1 {
 		client.failover = newDomainFailover(domains, cfg.FailoverAfter, engineCfg, engine, cfg.DiscoveryForDomain)
@@ -186,6 +191,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 
 // TrafficProfile returns the normalized profile selected at construction.
 func (c *Client) TrafficProfile() string { return c.trafficProfile }
+
+// LowReductionPercent returns the retained target, including when Full ignores it.
+func (c *Client) LowReductionPercent() int { return c.lowReductionPercent }
 
 // Dial waits for the server to confirm the destination before a SOCKS/HTTP
 // success is sent.

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,15 +14,17 @@ import (
 func TestCottenMaxTrafficProfileRuntimePropagation(t *testing.T) {
 	for _, tc := range []struct {
 		profile string
-		window  int
+		percent int
 	}{
-		{"full", 256},
-		{"low", 32},
+		{"full", 35},
+		{"low", 10},
+		{"low", 35},
+		{"low", 90},
 	} {
 		t.Run(tc.profile, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "client_config.toml")
-			body := "TUNNEL_MODE = \"cottenmax\"\nDOMAINS = [\"a.test\"]\nENCRYPTION_KEY = \"secret\"\nCOTTENMAX_TRAFFIC_PROFILE = \"" + tc.profile + "\"\n"
+			body := fmt.Sprintf("TUNNEL_MODE = \"cottenmax\"\nDOMAINS = [\"a.test\"]\nENCRYPTION_KEY = \"secret\"\nCOTTENMAX_TRAFFIC_PROFILE = %q\nCOTTENMAX_LOW_REDUCTION_PERCENT = %d\n", tc.profile, tc.percent)
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -41,9 +44,8 @@ func TestCottenMaxTrafficProfileRuntimePropagation(t *testing.T) {
 			if max.TrafficProfile() != tc.profile {
 				t.Fatalf("runtime profile=%q, want %q", max.TrafficProfile(), tc.profile)
 			}
-			stats := max.DomainStats()
-			if len(stats) != 1 || stats[0].MaxInflight != tc.window {
-				t.Fatalf("%s profile did not reach Max engine: %+v", tc.profile, stats)
+			if max.LowReductionPercent() != tc.percent {
+				t.Fatalf("%s reduction did not reach Max engine: %d, want %d", tc.profile, max.LowReductionPercent(), tc.percent)
 			}
 		})
 	}

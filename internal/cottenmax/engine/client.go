@@ -52,6 +52,11 @@ type Config struct {
 	// QueryRateLimiter optionally paces ALL query kinds before packet building.
 	// Nil retains current throughput behavior. Domain engines may share a budget.
 	QueryRateLimiter *QueryRateLimiter
+	// LowReductionPercent scales send admission while preserving Full's CC
+	// estimates. Zero disables percentage pacing. Valid enabled targets: 10..90.
+	LowReductionPercent int
+	// PercentagePacer may be shared across independent domain engines.
+	PercentagePacer *PercentagePacer
 	// DisableTailDuplication suppresses proactive upload copies, not ARQ recovery.
 	DisableTailDuplication bool
 	// InitialResolverLimit defers excess explicit resolvers to paced discovery.
@@ -344,6 +349,15 @@ func (cs *clientSession) isClosed() bool {
 // NewClient starts a client. It handshakes lazily on the first Dial.
 func NewClient(cfg Config) (*Client, error) {
 	cfg.setDefaults()
+	if cfg.LowReductionPercent != 0 && (cfg.LowReductionPercent < 10 || cfg.LowReductionPercent > 90) {
+		return nil, errors.New("soar: low reduction percent must be 10..90")
+	}
+	if cfg.PercentagePacer != nil && cfg.PercentagePacer.reduction != cfg.LowReductionPercent {
+		return nil, errors.New("soar: shared percentage pacer target differs from client")
+	}
+	if cfg.LowReductionPercent != 0 && cfg.PercentagePacer == nil {
+		cfg.PercentagePacer = NewPercentagePacer(cfg.LowReductionPercent)
+	}
 	if cfg.InitialResolverLimit > 0 && len(cfg.Resolvers) > cfg.InitialResolverLimit {
 		// Low traffic must also bound eager TCP/TLS connection fanout. Preserve
 		// every configured resolver as a candidate, without enabling new bundled
@@ -497,6 +511,9 @@ func (c *Client) Close() error {
 		// Under c.mu, so no snapshot is queued for the cache after the worker's final flush.
 		c.mu.Lock()
 		close(c.done)
+		if c.cfg.PercentagePacer != nil {
+			c.cfg.PercentagePacer.remove(c, time.Now())
+		}
 		if c.sess != nil && c.sess.session != nil {
 			c.sess.close(ErrClosed)
 		}
@@ -1096,6 +1113,10 @@ func (cs *clientSession) wantQueries() int {
 }
 
 func (c *Client) fillLocked(now time.Time) {
+	if c.cfg.PercentagePacer != nil {
+		c.updatePercentageReferenceLocked(now)
+	}
+	maxInflight := c.percentageFlightLimit()
 	cs := c.sess
 	if cs == nil || len(c.pending) >= maxPending {
 		return
@@ -1123,14 +1144,14 @@ func (c *Client) fillLocked(now time.Time) {
 			polls++
 		}
 	}
-	scoutLimit := min(maxHelloPaths, max(c.cfg.MaxInflight/8, 1), max(c.cfg.MaxInflight-1, 0))
-	if !c.anyUsableLocked(now) || (c.cfg.MaxInflight == 1 && !c.productivePathLocked(now)) {
+	scoutLimit := min(maxHelloPaths, max(maxInflight/8, 1), max(maxInflight-1, 0))
+	if !c.anyUsableLocked(now) || (maxInflight == 1 && !c.productivePathLocked(now)) {
 		// Without a verified path there is no application traffic to reserve for.
-		scoutLimit = min(maxHelloPaths, c.cfg.MaxInflight)
+		scoutLimit = min(maxHelloPaths, maxInflight)
 	}
 	var candidates []*path
 	if cs.busy() || now.Before(c.probeUntil) {
-		limit := min(scoutLimit-scouts, c.cfg.MaxInflight-inflight, maxPending-len(c.pending))
+		limit := min(scoutLimit-scouts, maxInflight-inflight, maxPending-len(c.pending))
 		for visited := 0; visited < len(c.paths) && len(candidates) < limit; visited++ {
 			c.scoutNext %= len(c.paths)
 			p := c.paths[c.scoutNext]
@@ -1144,16 +1165,16 @@ func (c *Client) fillLocked(now time.Time) {
 	// scouts get their turn, preventing alternate-path recovery indefinitely.
 	// Low mode gives one candidate an opportunity at most every 250ms (or the
 	// configured slower discovery pace); full mode keeps its original order.
-	if c.cfg.QueryRateLimiter != nil && len(candidates) > 0 && now.Sub(c.lastRateScout) >= max(c.cfg.Discovery.Pace, 250*time.Millisecond) {
+	if (c.cfg.QueryRateLimiter != nil || c.cfg.PercentagePacer != nil) && len(candidates) > 0 && now.Sub(c.lastRateScout) >= max(c.cfg.Discovery.Pace, 250*time.Millisecond) {
 		index := int(c.rateScoutNext % uint64(len(candidates)))
-		if sent := c.sendDataWithSlotsLocked(cs, candidates[index], now, false, c.cfg.MaxInflight-inflight); sent > 0 {
+		if sent := c.sendDataWithSlotsLocked(cs, candidates[index], now, false, maxInflight-inflight); sent > 0 {
 			inflight += sent
 			c.lastRateScout = now
 			c.rateScoutNext++
 			candidates = append(candidates[:index], candidates[index+1:]...)
 		}
 	}
-	trafficLimit := c.cfg.MaxInflight - len(candidates)
+	trafficLimit := maxInflight - len(candidates)
 	for inflight < trafficLimit && len(c.pending) < maxPending {
 		cs.mu.Lock()
 		need := cs.hasData() || polls < cs.wantQueries()
@@ -1173,7 +1194,7 @@ func (c *Client) fillLocked(now time.Time) {
 		polls += sent
 	}
 	for _, p := range candidates {
-		inflight += c.sendDataWithSlotsLocked(cs, p, now, false, c.cfg.MaxInflight-inflight)
+		inflight += c.sendDataWithSlotsLocked(cs, p, now, false, maxInflight-inflight)
 	}
 }
 
@@ -1186,7 +1207,7 @@ func (c *Client) pickPathLocked(now time.Time, exclude *path) *path {
 		if p == exclude {
 			continue
 		}
-		if !p.verified || !p.usable(now) || float64(p.inflight) >= p.cwnd {
+		if !p.verified || !p.usable(now) || float64(p.inflight) >= c.percentagePathWindow(p) {
 			continue
 		}
 		rtt := p.rto()
@@ -1232,7 +1253,7 @@ func (c *Client) sendHellosLocked(cs *clientSession, now time.Time) {
 	order := slices.Clone(c.paths)
 	slices.SortStableFunc(order, func(a, b *path) int { return a.lastHello.Compare(b.lastHello) })
 	for _, p := range order {
-		if sent >= maxHelloPaths || c.liveQueriesLocked() >= c.cfg.MaxInflight || len(c.pending) >= maxPending {
+		if sent >= maxHelloPaths || c.liveQueriesLocked() >= c.percentageFlightLimit() || len(c.pending) >= maxPending {
 			break
 		}
 		if !p.usable(now) || p.inflight > 0 || now.Sub(p.lastHello) < helloRetry {
@@ -1251,7 +1272,7 @@ func (c *Client) sendHellosLocked(cs *clientSession, now time.Time) {
 }
 
 func (c *Client) sendDataLocked(cs *clientSession, p *path, now time.Time, allowDup bool) {
-	c.sendDataWithSlotsLocked(cs, p, now, allowDup, c.cfg.MaxInflight-c.liveQueriesLocked())
+	c.sendDataWithSlotsLocked(cs, p, now, allowDup, c.percentageFlightLimit()-c.liveQueriesLocked())
 }
 
 // sendDataWithSlotsLocked returns the number of queries sent, including a tail
@@ -1261,6 +1282,9 @@ func (c *Client) sendDataWithSlotsLocked(cs *clientSession, p *path, now time.Ti
 	// paths, the tail copy) respects the ceiling; a packet built but never sent would sit in
 	// the session's sent map with no query to fail it.
 	if slots <= 0 || len(c.pending) >= maxPending {
+		return 0
+	}
+	if c.cfg.LowReductionPercent != 0 && float64(p.inflight) >= c.percentagePathWindow(p) {
 		return 0
 	}
 	if !c.takeQueryLocked(now) {

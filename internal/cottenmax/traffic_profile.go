@@ -11,11 +11,9 @@ import (
 )
 
 const (
-	TrafficProfileFull = "full"
-	TrafficProfileLow  = "low"
-	// Low-profile query pacing includes data, polls, retries and discovery.
-	LowTrafficQueriesPerSecond = 100
-	LowTrafficQueryBurst       = 4
+	TrafficProfileFull         = "full"
+	TrafficProfileLow          = "low"
+	DefaultLowReductionPercent = 35
 	LowTrafficStreamsPerSecond = 2
 	LowTrafficStreamBurst      = 4
 	LowTrafficTransportBurst   = 2
@@ -24,7 +22,7 @@ const (
 // applyTrafficProfile runs before any socket is opened. A full client retains
 // its original settings and never allocates a pacing object. All engines made
 // by a low client receive the same limiter through the copied engine config.
-func applyTrafficProfile(cfg *ClientConfig) (string, *soar.QueryRateLimiter, error) {
+func applyTrafficProfile(cfg *ClientConfig) (string, *soar.PercentagePacer, error) {
 	profile := strings.ToLower(strings.TrimSpace(cfg.TrafficProfile))
 	if profile == "" {
 		profile = TrafficProfileFull
@@ -32,20 +30,22 @@ func applyTrafficProfile(cfg *ClientConfig) (string, *soar.QueryRateLimiter, err
 	if profile != TrafficProfileFull && profile != TrafficProfileLow {
 		return "", nil, fmt.Errorf("cottenmax: unknown traffic profile %q (want full or low)", cfg.TrafficProfile)
 	}
+	if cfg.LowReductionPercent == 0 {
+		cfg.LowReductionPercent = DefaultLowReductionPercent
+	}
+	if cfg.LowReductionPercent < 10 || cfg.LowReductionPercent > 90 {
+		return "", nil, fmt.Errorf("cottenmax: low reduction percent must be 10..90")
+	}
 	if profile == TrafficProfileFull {
 		return profile, nil, nil
 	}
-	cfg.MaxInflight = profileCeiling(cfg.MaxInflight, 32)
-	cfg.MaxPathWindow = profileCeiling(cfg.MaxPathWindow, 8)
-	cfg.MaxStreams = profileCeiling(cfg.MaxStreams, 64)
-	cfg.Hold = max(cfg.Hold, time.Second)
 	cfg.Discovery = lowTrafficDiscovery(cfg.Discovery)
 	if original := cfg.DiscoveryForDomain; original != nil {
 		cfg.DiscoveryForDomain = func(domain string) Discovery {
 			return lowTrafficDiscovery(original(domain))
 		}
 	}
-	return profile, soar.NewQueryRateLimiter(LowTrafficQueriesPerSecond, LowTrafficQueryBurst), nil
+	return profile, soar.NewPercentagePacer(cfg.LowReductionPercent), nil
 }
 
 func profileCeiling(value, ceiling int) int {

@@ -40,12 +40,43 @@ func TestCottenMaxTrafficProfileConfig(t *testing.T) {
 			if cfg.CottenMaxTrafficProfile != tc.want {
 				t.Fatalf("profile = %q, want %q", cfg.CottenMaxTrafficProfile, tc.want)
 			}
+			if cfg.CottenMaxLowReductionPercent != 35 {
+				t.Fatalf("default Low reduction = %d, want 35", cfg.CottenMaxLowReductionPercent)
+			}
 			// Profile limits belong to the Max adapter; the persisted tuning
 			// values remain intact so switching back to full restores them.
 			if cfg.CottenMaxMaxInflight != 256 || cfg.CottenMaxMaxPathWindow != 256 || cfg.CottenMaxHoldMilliseconds != 500 {
 				t.Fatalf("profile rewrote independent tuning values: inflight=%d path=%d hold=%d", cfg.CottenMaxMaxInflight, cfg.CottenMaxMaxPathWindow, cfg.CottenMaxHoldMilliseconds)
 			}
 		})
+	}
+}
+
+func TestCottenMaxLowReductionRangeAndCommandLine(t *testing.T) {
+	for _, value := range []int{10, 35, 90} {
+		line := fmt.Sprintf("COTTENMAX_TRAFFIC_PROFILE = \"low\"\nCOTTENMAX_LOW_REDUCTION_PERCENT = %d", value)
+		cfg, err := LoadClientConfig(trafficProfileConfigFile(t, TunnelCottenMax, line))
+		if err != nil || cfg.CottenMaxLowReductionPercent != value {
+			t.Fatalf("reduction %d did not survive loading: cfg=%d err=%v", value, cfg.CottenMaxLowReductionPercent, err)
+		}
+	}
+	for _, value := range []int{-1, 0, 9, 91, 100} {
+		line := fmt.Sprintf("COTTENMAX_LOW_REDUCTION_PERCENT = %d", value)
+		if _, err := LoadClientConfig(trafficProfileConfigFile(t, TunnelCottenMax, line)); err == nil || !strings.Contains(err.Error(), "COTTENMAX_LOW_REDUCTION_PERCENT") {
+			t.Fatalf("invalid reduction %d: %v", value, err)
+		}
+	}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	binder, err := NewClientConfigFlagBinder(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Parse([]string{"--cottenmax-low-reduction-percent", "70"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadClientConfigWithOverrides(trafficProfileConfigFile(t, TunnelCottenMax, ""), binder.Overrides())
+	if err != nil || cfg.CottenMaxLowReductionPercent != 70 {
+		t.Fatalf("CLI reduction lost: %d %v", cfg.CottenMaxLowReductionPercent, err)
 	}
 }
 

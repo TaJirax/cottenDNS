@@ -19,7 +19,7 @@ import (
 
 func TestTrafficProfileDefaultPreservesConfiguration(t *testing.T) {
 	for _, profile := range []string{"", "full", " FULL "} {
-		cfg := ClientConfig{TrafficProfile: profile, MaxInflight: 377, MaxPathWindow: 99,
+		cfg := ClientConfig{TrafficProfile: profile, LowReductionPercent: 35, MaxInflight: 377, MaxPathWindow: 99,
 			MaxStreams: 93, Hold: 7 * time.Millisecond,
 			Discovery: Discovery{Enabled: true, Want: 30, Concurrency: 17, Pace: time.Millisecond, SampleRanges: 47}}
 		before := cfg
@@ -38,8 +38,8 @@ func TestTrafficProfileLowCeilingsAndDiscovery(t *testing.T) {
 	if err != nil || name != TrafficProfileLow || limiter == nil {
 		t.Fatalf("low profile was not selected: name=%q limiter=%p err=%v", name, limiter, err)
 	}
-	if cfg.MaxInflight != 32 || cfg.MaxPathWindow != 8 || cfg.MaxStreams != 64 || cfg.Hold != time.Second {
-		t.Fatalf("incorrect low ceilings: %+v", cfg)
+	if cfg.MaxInflight != 0 || cfg.MaxPathWindow != 0 || cfg.MaxStreams != 0 || cfg.Hold != 0 || cfg.LowReductionPercent != 35 {
+		t.Fatalf("Low changed Full reference limits, streams or hold: %+v", cfg)
 	}
 	for _, discovery := range []Discovery{cfg.Discovery, cfg.DiscoveryForDomain("a.example")} {
 		if discovery.Want != 4 || discovery.Concurrency != 2 || discovery.Pace != 250*time.Millisecond || discovery.SampleRanges != 0 {
@@ -76,7 +76,7 @@ func TestTrafficProfileFullKeepsPacingDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if c.TrafficProfile() != TrafficProfileFull || c.admission != nil || c.transportAdmission != nil || c.failover.admission != nil || c.failover.cfg.QueryRateLimiter != nil || c.failover.cfg.DisableTailDuplication || c.failover.cfg.InitialResolverLimit != 0 {
+	if c.TrafficProfile() != TrafficProfileFull || c.LowReductionPercent() != 35 || c.admission != nil || c.transportAdmission != nil || c.failover.admission != nil || c.failover.cfg.QueryRateLimiter != nil || c.failover.cfg.PercentagePacer != nil || c.failover.cfg.LowReductionPercent != 0 || c.failover.cfg.DisableTailDuplication || c.failover.cfg.InitialResolverLimit != 0 {
 		t.Fatal("full profile acquired a rate ceiling or changed discovery/duplication")
 	}
 }
@@ -206,7 +206,7 @@ func (c *trafficPacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 // This sends real UDP DNS and application data through independent domain
 // sessions. Rate assertions observe writes at the socket boundary, so network
 // scheduler batching cannot manufacture a burst at the receiving socket.
-func TestTrafficProfileLowSharesQueryCeilingAcrossDomains(t *testing.T) {
+func TestTrafficProfileLowSharesPercentagePacerAcrossDomains(t *testing.T) {
 	f := startParallelDNSServer(t)
 	recorder := &trafficRecorder{}
 	cfg := parallelTestConfig(f)
@@ -226,7 +226,7 @@ func TestTrafficProfileLowSharesQueryCeilingAcrossDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if c.TrafficProfile() != TrafficProfileLow || c.failover.cfg.QueryRateLimiter == nil || !c.failover.cfg.DisableTailDuplication {
+	if c.TrafficProfile() != TrafficProfileLow || c.LowReductionPercent() != 35 || c.failover.cfg.PercentagePacer == nil || c.failover.cfg.QueryRateLimiter != nil || c.failover.cfg.LowReductionPercent != 35 || !c.failover.cfg.DisableTailDuplication {
 		t.Fatal("low profile did not configure every domain engine through shared config")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -292,27 +292,33 @@ func TestTrafficProfileLowSharesQueryCeilingAcrossDomains(t *testing.T) {
 	if counts[0] < 50 || counts[1] < 50 {
 		t.Fatalf("both domains must carry verified traffic: %v", counts)
 	}
-	// A token bucket permits burst + rate*duration. Allow two additional
-	// queries for time spent between token admission and the actual UDP write.
-	for _, window := range []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, time.Second} {
-		limit := LowTrafficQueryBurst + int(float64(LowTrafficQueriesPerSecond)*window.Seconds()) + 2
-		for left, right := 0, 0; right < len(queries); right++ {
-			for queries[right].at.Sub(queries[left].at) >= window {
-				left++
-			}
-			if right-left+1 > limit {
-				t.Fatalf("shared low ceiling exceeded in %s: %d > %d (per-domain queries %v)", window, right-left+1, limit, counts)
-			}
-		}
-	}
 	duration := queries[len(queries)-1].at.Sub(queries[0].at)
-	if duration < 2*time.Second {
-		t.Fatalf("pacing failed to bound sustained traffic: %d queries in %s", len(queries), duration)
-	}
 	for _, stat := range c.DomainStats() {
-		if stat.ActiveStreams > 1 || stat.MaxInflight != 16 {
+		if stat.ActiveStreams > 1 || stat.MaxInflight != 128 {
 			t.Fatalf("unexpected domain budget: %+v", stat)
 		}
 	}
 	t.Logf("verified %d bytes across two domains using %d queries in %s (%v per domain)", 48<<10, len(queries), duration, counts)
+}
+
+func TestTrafficProfileReductionTargetsValidatedBeforeSockets(t *testing.T) {
+	for _, profile := range []string{TrafficProfileFull, TrafficProfileLow} {
+		for _, percent := range []int{10, 35, 90} {
+			cfg := ClientConfig{TrafficProfile: profile, LowReductionPercent: percent, MaxStreams: 200, Hold: 500 * time.Millisecond}
+			_, pacer, err := applyTrafficProfile(&cfg)
+			if err != nil || cfg.LowReductionPercent != percent || cfg.MaxStreams != 200 || cfg.Hold != 500*time.Millisecond || (pacer != nil) != (profile == TrafficProfileLow) {
+				t.Fatalf("profile=%s percent=%d cfg=%+v pacer=%p err=%v", profile, percent, cfg, pacer, err)
+			}
+		}
+		for _, percent := range []int{-1, 9, 91, 100} {
+			var sockets atomic.Int32
+			_, err := NewClient(ClientConfig{TrafficProfile: profile, LowReductionPercent: percent, ListenPacket: func(context.Context, string, string) (net.PacketConn, error) {
+				sockets.Add(1)
+				return nil, net.ErrClosed
+			}})
+			if err == nil || sockets.Load() != 0 {
+				t.Fatalf("invalid target %d opened socket or accepted", percent)
+			}
+		}
+	}
 }

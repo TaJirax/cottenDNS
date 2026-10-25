@@ -31,6 +31,9 @@ func (c *Client) runCottenMax(ctx context.Context) error {
 	c.cottenMax.Store(engine)
 	defer engine.Close()
 	c.log.Infof("CottenMax traffic profile: %s", engine.TrafficProfile())
+	if engine.TrafficProfile() == cottenmax.TrafficProfileLow {
+		c.log.Infof("CottenMax Low reduction target: %d%% (approximate; resolver/network dependent)", engine.LowReductionPercent())
+	}
 	c.log.Warnf("Experimental CottenMax: safe startup, held polls, ephemeral keys, byte-range retransmission and implicit upload ACKs; no automatic legacy downgrade")
 	go c.runTrafficStatsReporter(ctx)
 	go func() {
@@ -297,8 +300,9 @@ func (c *Client) newCottenMaxEngine() (*cottenmax.Client, error) {
 		return nil, fmt.Errorf("experimental cottenmax does not yet support hard QUERY_RATE_LIMIT_* budgets; use legacy")
 	}
 	engine, err := cottenmax.NewClient(cottenmax.ClientConfig{
-		TrafficProfile:     c.cfg.CottenMaxTrafficProfile,
-		FECDownloadEnabled: c.cfg.CottenMaxFECDownloadEnabled, FECDataShards: c.cfg.CottenMaxFECDataShards, FECParityShards: c.cfg.CottenMaxFECParityShards,
+		TrafficProfile:      c.cfg.CottenMaxTrafficProfile,
+		LowReductionPercent: c.cfg.CottenMaxLowReductionPercent,
+		FECDownloadEnabled:  c.cfg.CottenMaxFECDownloadEnabled, FECDataShards: c.cfg.CottenMaxFECDataShards, FECParityShards: c.cfg.CottenMaxFECParityShards,
 		Domain: c.cfg.Domains[0], PublicKey: c.cfg.CottenMaxServerPublicKey,
 		Secret: c.cfg.EncryptionKey, Resolvers: resolvers, TCP: tcp,
 		Domains:          append(append([]string(nil), c.cfg.Domains[1:]...), c.cfg.StandbyDomains...),
