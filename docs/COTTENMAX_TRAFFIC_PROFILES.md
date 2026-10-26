@@ -173,12 +173,14 @@ The Android and desktop feature branches include the same engine pin,
 
 - [Android `bf61edff`](https://github.com/WhiteDNS/WhiteDNS-Android/commit/bf61edffc8c45154429f60bca0ea266d72a690cc):
   `feature/cottenmax-client-traffic-profiles`.
-- [Desktop `ee2935b6`](https://github.com/WhiteDNS/WhiteDNS-Desktop/commit/ee2935b60189a659c0dafa93358525da7a7445cd):
+- [Desktop `98ea9691`](https://github.com/WhiteDNS/WhiteDNS-Desktop/commit/98ea96912078aa1239de6fbcf8a5bb18debe5281):
   `feature/cottenmax-traffic-profiles-local-sync`.
 
 The original local app checkouts were synchronized to those organization feature
-commits after preserving their earlier local work. Main branches remain unchanged.
-No production release or live-server deployment was made for this experiment.
+commits after preserving their earlier local work. Desktop also incorporates the
+newer organization 1.4.7 import/deduplication and dark-mode fixes from `ae924cc2`.
+No main branch was changed by this feature work, and no production release or
+live-server deployment was made for this experiment.
 
 Core [ordinary CI](https://github.com/WhiteDNS/CottenDNS/actions/runs/40238477067)
 passed all six jobs, including race, end-to-end, deployment-contract and Android
@@ -188,8 +190,11 @@ percentage runs above. Android options tests, Kotlin/UI compilation, four ABI
 builds and all five debug APK package checks passed, alongside
 [organization debug CI](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/40239062264).
 Desktop frontend/type checks, Go tests, Windows helper/app build and its embedded
-helper/source-receipt package verification passed. No physical Android device or
-Shatel/VPS path was available for these checks.
+helper/source-receipt package verification passed. After incorporating 1.4.7, the
+combined Go/frontend checks, light/dark profile UI checks, Max control bounds and
+saved-value UI checks passed; the rebuilt app's embedded helper was verified
+again in the original local checkout. No physical Android device or Shatel/VPS
+path was available for these checks.
 
 ## Historical fixed-100-QPS prototype
 
