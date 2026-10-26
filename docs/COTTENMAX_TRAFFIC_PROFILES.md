@@ -73,7 +73,7 @@ OS hostname lookups and recursive resolver retries are not tunnel query tokens.
 
 ## Client selection and server compatibility
 
-Android and desktop feature branches add a Max-only Full/Low selector and a
+Android and desktop clients include a Max-only Full/Low selector and a
 Low-only 10..90% control, default 35. The value persists through settings,
 profile links/import/export and runtime TOML. Normal behavior is unchanged;
 Full retains the Low value without applying it. Reconnect to apply changes.
@@ -166,7 +166,7 @@ The final client/harness hashes identify fresh builds of `77bf87db`; the retaine
 server hash is identical for every case. Historical timer-relay experiments are
 kept in separate bundles and are not pooled with these results.
 
-## Client branches and validation
+## Client integration and validation
 
 The Android and desktop feature branches include the same engine pin,
 `77bf87db28af6b64a4b6c404074982235272ed9b`, plus the client controls:
@@ -176,11 +176,20 @@ The Android and desktop feature branches include the same engine pin,
 - [Desktop `98ea9691`](https://github.com/WhiteDNS/WhiteDNS-Desktop/commit/98ea96912078aa1239de6fbcf8a5bb18debe5281):
   `feature/cottenmax-traffic-profiles-local-sync`.
 
-The original local app checkouts were synchronized to those organization feature
-commits after preserving their earlier local work. Desktop also incorporates the
-newer organization 1.4.7 import/deduplication and dark-mode fixes from `ae924cc2`.
-No main branch was changed by this feature work, and no production release or
-live-server deployment was made for this experiment.
+After the experiment, the client changes were merged into organization main on
+2026-10-26 at the user's request:
+
+- [Android PR #89](https://github.com/WhiteDNS/WhiteDNS-Android/pull/89),
+  main merge `d1cdea87629d36d1be5d78c47e1a90034cc4b6a6`.
+- [Desktop PR #24](https://github.com/WhiteDNS/WhiteDNS-Desktop/pull/24),
+  main merge `c7aaf6d96bba857ce8db4e9e7a2a8655e5236e60`.
+
+Both PRs included the latest organization main before merging, with no merge
+conflicts. Desktop preserves the organization 1.4.7 import/deduplication and
+dark-mode fixes from `ae924cc2`. The original local app checkouts were
+fast-forwarded to organization main after preserving their earlier local work;
+their resulting source trees match the validated feature trees. No production
+tag/release or live-server deployment was made for this integration.
 
 Core [ordinary CI](https://github.com/WhiteDNS/CottenDNS/actions/runs/40238477067)
 passed all six jobs, including race, end-to-end, deployment-contract and Android
@@ -195,6 +204,15 @@ combined Go/frontend checks, light/dark profile UI checks, Max control bounds an
 saved-value UI checks passed; the rebuilt app's embedded helper was verified
 again in the original local checkout. No physical Android device or Shatel/VPS
 path was available for these checks.
+
+Before merging, Android's [PR debug build](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/40305455324)
+passed all 24 stages, including native builds, core/transport checks, app tests,
+APK assembly and package verification. Its [StormDNS boundary check](https://github.com/WhiteDNS/WhiteDNS-Android/actions/runs/40305455279)
+also passed. Desktop's [acceptance and Windows recovery checks](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/40305464226)
+and [Windows x64 / Linux x64 / Linux ARM64 package builds](https://github.com/WhiteDNS/WhiteDNS-Desktop/actions/runs/40305464324)
+all passed. One macOS test attempt timed out during local parallel-domain path
+readiness; 20 local repetitions and the unchanged CI rerun passed. No source or
+test assertion was changed to obtain that rerun result.
 
 ## Historical fixed-100-QPS prototype
 
